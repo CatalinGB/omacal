@@ -4224,6 +4224,26 @@ test.describe('EventForm', () => {
     page.evaluate(() => (window as any).__saves as any[]);
 
   /**
+   * The panel scrolls down, never sideways (Plamen, 2026-10-01: the edit form
+   * slid left under a touchpad, every label cut off). The reminder's amount
+   * and the repeat's count are each sized by a scoped rule that has to
+   * outrank the form's every-field `width: 100%`; once the checkbox and radio
+   * exemptions raised that rule to (0,3,1) on 2026-09-02, both lost, and a
+   * reminder row came out 470px wide in a 300px card.
+   */
+  test('the form never scrolls sideways, with a reminder and a counted repeat open', async ({ page }) => {
+    await open(page, 'create');
+    await page.getByRole('button', { name: '+ Add notification' }).click();
+    await page.getByLabel('Repeat', { exact: true }).selectOption('weekly');
+    await page.getByLabel('Repeat ends').selectOption('after');
+
+    const overflow = await page.locator('.pop').evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflow, 'nothing in the form is wider than the panel').toBe(0);
+    expect((await page.getByLabel('Reminder amount').boundingBox())!.width).toBeLessThan(80);
+    expect((await page.getByLabel('Number of occurrences').boundingBox())!.width).toBeLessThan(80);
+  });
+
+  /**
    * **#78, and the reason this picker exists.** The platform's calendar could
    * not be closed from the page at all: WebKitGTK's popup holds an input
    * grab, so an outside click never reached us — measured on the real build,

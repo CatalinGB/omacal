@@ -1264,14 +1264,19 @@
 
   /* Not the checkboxes or radios: those are drawn app-wide in app.css, and
      a scoped rule outranks it — this one, left to match every input, turned
-     the all-day box into a padded pill with no tick (2026-09-02). */
-  input:not([type='checkbox']):not([type='radio']), select, textarea {
+     the all-day box into a padded pill with no tick (2026-09-02). The
+     exemption sits in `:where()` so it weighs nothing: as two `:not()`s it
+     raised this rule to (0,3,1), and the defaults it sets beat every
+     narrower rule below that tied or trailed it — the reminder's amount and
+     the repeat's count went full width, and the form scrolled sideways
+     (2026-10-01). */
+  input:where(:not([type='checkbox'], [type='radio'])), select, textarea {
     font: inherit; font-size: 12px; color: var(--text);
     background: color-mix(in srgb, var(--text) 5%, transparent);
     border: 1px solid var(--hairline); border-radius: 5px;
     padding: 4px 6px; min-width: 0; width: 100%; box-sizing: border-box;
   }
-  input:not([type='checkbox']):not([type='radio']):focus, select:focus, textarea:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+  input:where(:not([type='checkbox'], [type='radio'])):focus, select:focus, textarea:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
   /* The appearance/chevron rule is global now — App.svelte, and fix/56's
      commit message for why. Only the background shorthand's reset needs
      compensating here: it clears the global background-image, so the chevron
