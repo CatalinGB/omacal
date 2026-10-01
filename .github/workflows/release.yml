@@ -107,8 +107,18 @@ jobs:
       # step and the manifest job below both build on v0's names. Moving to
       # v1 is a change to those two, not a version edit, and Dependabot is
       # told the same in .github/dependabot.yml.
+      #
+      # The CLI is the one ui/package-lock.json pins, not tauri-action's
+      # default: with no package.json at the root the action runs `npm
+      # install -g @tauri-apps/cli@v2`, the newest 2.x on the day. 2.12.1
+      # (2026-09-30) bundled a different AppImage — no xdg-open, a pinned
+      # linuxdeploy — and the repair below, written against the old layout,
+      # failed the v5.2.1 cut. A new bundler is a change made on purpose,
+      # through the lockfile, not one a tag picks up.
       - name: Build the bundles
         uses: tauri-apps/tauri-action@v0
+        with:
+          tauriScript: ${{ github.workspace }}/ui/node_modules/.bin/tauri
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OMACAL_CLIENT_ID: ${{ secrets.OMACAL_CLIENT_ID }}
@@ -243,7 +253,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           image=$(ls target/release/bundle/appimage/*.AppImage)
-          npx --yes @tauri-apps/cli@^2 signer sign "$image"
+          ui/node_modules/.bin/tauri signer sign "$image"
           test -s "$image.sig" || { echo "no signature was produced" >&2; exit 1; }
 
       # Tag push: attach the repaired bundles to a draft release for the tag.
