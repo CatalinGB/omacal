@@ -11,6 +11,8 @@ mod caldav_write;
 mod calendars;
 mod commands;
 mod combined;
+#[cfg(target_os = "linux")]
+mod edge_cursor;
 mod errors;
 mod events;
 mod export;
@@ -1532,6 +1534,8 @@ pub fn run() {
                 settings::apply_interface_scale(app.handle(), scale);
             }
             pinch::install(app.handle());
+            #[cfg(target_os = "linux")]
+            edge_cursor::install(app.handle());
 
             // **The window, as early as there is an answer.**
             //
