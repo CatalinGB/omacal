@@ -438,10 +438,9 @@ mod tests {
             open_date: Default::default(),
         };
 
-        let dir = std::env::temp_dir().join(format!("omacal-ipc-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("ipc.sock");
-        let _ = std::fs::remove_file(&path);
+        // Dropped at the end of the test, socket and all.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ipc.sock");
         let listener = tokio::net::UnixListener::bind(&path).unwrap();
 
         let server = tokio::spawn(async move {
@@ -481,7 +480,6 @@ mod tests {
         let mut reply = String::new();
         BufReader::new(stream).read_line(&mut reply).await.unwrap();
         server.await.unwrap();
-        let _ = std::fs::remove_file(&path);
 
         let envelope: serde_json::Value = serde_json::from_str(&reply).unwrap();
         assert_eq!(envelope["ok"], false);

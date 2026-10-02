@@ -82,10 +82,11 @@ pub fn candidates(exe_dir: Option<&Path>, appdir: Option<&Path>) -> Vec<PathBuf>
 mod tests {
     use super::*;
 
-    fn tmp() -> PathBuf {
-        let d = std::env::temp_dir().join(format!("omacal-icu-tz-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    /// Removed when dropped, so a test run leaves nothing in /tmp — the
+    /// hand-rolled `omacal-icu-tz-<uuid>` dirs this replaced stayed behind,
+    /// two per run (110 of them by 2026-10-02).
+    fn tmp() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
     }
 
     /// The order is Tauri's: a bundle's `../lib/omacal` beside the binary
@@ -109,8 +110,8 @@ mod tests {
     #[test]
     fn find_wants_the_zone_file_itself() {
         let root = tmp();
-        let bin = root.join("usr/bin");
-        let lib = root.join("usr/lib/omacal/icu-tz");
+        let bin = root.path().join("usr/bin");
+        let lib = root.path().join("usr/lib/omacal/icu-tz");
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::create_dir_all(&lib).unwrap();
         assert_eq!(find(Some(&bin), None), None, "an empty directory is not the data");
@@ -121,10 +122,10 @@ mod tests {
         );
         // The AppImage form, when the binary's own neighbour is missing.
         let appdir = tmp();
-        let inside = appdir.join("usr/lib/omacal/icu-tz");
+        let inside = appdir.path().join("usr/lib/omacal/icu-tz");
         std::fs::create_dir_all(&inside).unwrap();
         std::fs::write(inside.join(PROBE_FILE), b"x").unwrap();
-        assert_eq!(find(Some(Path::new("/nowhere/bin")), Some(&appdir)), Some(inside));
+        assert_eq!(find(Some(Path::new("/nowhere/bin")), Some(appdir.path())), Some(inside));
     }
 
     /// The vendored set is whole and is ICU data: every file ICU reads from
