@@ -221,9 +221,8 @@ pub async fn update_task(
     due_all_day: bool,
     notes: Option<String>,
     calendar_id: Option<i64>,
-    // The raw stored integer the window passed back (0 = none). The window
-    // always knows the whole state, so this is whole-state too; a passthrough
-    // of an untouched value keeps a server's non-canonical `7`.
+    // The raw stored integer the window passed back (0 = none); passing an
+    // untouched value straight through keeps a server's non-canonical `7`.
     priority: i64,
 ) -> Result<Vec<TaskVm>, String> {
     crate::demo_sync_guard(state.demo)?;
@@ -253,11 +252,10 @@ async fn update_impl(
     let task = omacal_store::task_by_id(&state.pool, id)
         .await?
         .ok_or_else(|| anyhow::anyhow!(TASK_GONE))?;
-    // Absent (`None`) leaves the stored value — the byte-for-byte passthrough
-    // that keeps a server's non-canonical `7`; `Some(0)` clears. Both go
-    // through `priority_to_write`, the one place an integer becomes writable,
-    // so an untouched `0` still writes no `PRIORITY:0` and the create path
-    // agrees on what "none" is.
+    // Absent (`None`) leaves the stored value — the passthrough that keeps a
+    // server's non-canonical `7`; `Some(0)` clears. `priority_to_write` is the
+    // one rule for what is writable, so an untouched `0` writes no
+    // `PRIORITY:0`.
     let priority = match priority {
         None => omacal_caldav::priority_to_write(task.priority),
         Some(raw) => omacal_caldav::priority_to_write(raw),
@@ -605,8 +603,6 @@ async fn create_impl(
             omacal_caldav::IcsTime::Zoned { dt: z.datetime(), tzid: cal_tz.clone() }
         }
     });
-    // One rule for what is writable, shared with the edit path: a stray value
-    // cannot become `PRIORITY:42`.
     let priority = omacal_caldav::priority_to_write(priority);
     let ics = omacal_caldav::new_todo_ics(&uid, summary, due_time.as_ref(), priority, now);
 

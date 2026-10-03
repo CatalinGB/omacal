@@ -586,8 +586,7 @@
               onclick={() => (grouping = 'list')}>By list</button>
     </div>
     <!-- A second view switch, orthogonal to grouping: it orders the rows
-         *within* a group. Persisted, because a preferred order set once
-         should not be set again every morning. -->
+         *within* a group, and is kept. -->
     <div class="seg" role="group" aria-label="Order tasks">
       <button class:on={taskSort() === 'date'} aria-pressed={taskSort() === 'date'}
               onclick={() => chooseSort('date')}>Date</button>

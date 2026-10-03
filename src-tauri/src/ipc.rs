@@ -97,9 +97,8 @@ pub(crate) enum Request {
         due_all_day: bool,
         #[serde(default)]
         notes: Option<String>,
-        /// Three states, unlike create: **absent** leaves the task's priority
-        /// alone (`None` — the byte-for-byte passthrough that keeps a server's
-        /// non-canonical value), `Some(0)` clears it, `Some(1..=9)` sets it.
+        /// Three states, unlike create: absent (`None`) leaves it, `Some(0)`
+        /// clears it, `Some(1..=9)` sets it.
         #[serde(default)]
         priority: Option<i64>,
     },

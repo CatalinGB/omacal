@@ -87,7 +87,7 @@ export const priorityLabel = (raw: number): 'High' | 'Medium' | 'Low' | null =>
 /** The option the editor should *show* for a stored integer: the value itself
  *  when it is one of the four, else the band's canonical level — so a server's
  *  non-canonical 7 shows as Low rather than falling back to None. Display
- *  only: an untouched save still sends the raw value (2's note above). */
+ *  only: an untouched save still sends the raw value. */
 export const priorityOption = (raw: number): number =>
   raw === 0 ? 0
   : raw >= 1 && raw <= 4 ? 1

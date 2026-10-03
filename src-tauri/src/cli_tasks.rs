@@ -58,9 +58,8 @@ pub(crate) enum PriorityArg {
 }
 
 impl PriorityArg {
-    /// The raw wire integer the app stores: the three levels' RFC values from
-    /// the one home for them ([`omacal_caldav::TaskPriority`]), and `0` for
-    /// "no priority".
+    /// The raw wire integer the app stores: the three levels' values from
+    /// [`omacal_caldav::TaskPriority`], and `0` for no priority.
     fn wire(self) -> i64 {
         match self {
             PriorityArg::None => 0,
@@ -289,10 +288,8 @@ pub(crate) async fn execute(pool: &sqlx::SqlitePool, cmd: &TaskCmd, json: bool) 
                 Ok(v) => v,
                 Err(m) => return refuse(&m),
             };
-            // Naming nothing about priority means leaving what is there: the
-            // CLI sends the task's own raw value through (0 clears on the
-            // app's side), which is the byte-for-byte passthrough. A named
-            // word sets or clears.
+            // Naming nothing leaves the value: the CLI sends the task's own
+            // raw value through; a named word sets or clears.
             let priority = match priority {
                 Some(word) => Some(word.wire()),
                 None => Some(task.priority),
