@@ -714,11 +714,13 @@
                            isToday={draft.date === '' || draft.date === dateInputValue(Date.now())}
                            onchange={(v) => { if (v && draft.date === '') draft.date = dateInputValue(Date.now()); }} />
               </div>
-              <label class="field">
-                <span class="lab">Priority</span>
-                <!-- A native select, so the app's global select styling and
-                     its keyboard behaviour apply for free; the raw value is
-                     what the app stores, 0 for none. -->
+              <label class="efield">
+                <span class="elab">Priority</span>
+                <!-- A native select, so its keyboard behaviour is the
+                     platform's; the global rule gives it the chevron and the
+                     chrome below gives it the same field look as the date and
+                     time inputs. The raw value is what the app stores, 0 for
+                     none. -->
                 <select aria-label="Priority" disabled={saving}
                         onchange={(e) => (draft = { ...draft, priority: Number(e.currentTarget.value) })}>
                   {#each PRIORITY_CHOICES as c}
@@ -1014,6 +1016,19 @@
   .when { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
   .enotes { font: inherit; font-size: 11px; resize: vertical; padding: 6px 8px; border-radius: 5px;
             border: 1px solid var(--hairline); background: var(--bg); color: var(--text); }
+  /* The editor's one native select. The global `select` rule gives it the
+     chevron and `appearance: none`, but no font, colour, border or radius —
+     so without this it drew the platform's light widget beside the dark
+     DateField/TimeField. `background-color`, not the `background` shorthand,
+     which would clobber the global chevron. */
+  .efield { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .elab { font-size: 9.5px; color: var(--muted); letter-spacing: .05em; }
+  .efield select { font: inherit; font-size: 12.5px; color: var(--text);
+                   background-color: color-mix(in srgb, var(--text) 5%, transparent);
+                   border: 1px solid var(--hairline); border-radius: 5px;
+                   padding: 4px 22px 4px 6px; }
+  .efield select:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+  .efield select:disabled { opacity: .5; cursor: default; }
   .eact { display: flex; justify-content: flex-end; gap: 6px; }
   .eact button { appearance: none; -webkit-appearance: none; font: inherit; font-size: 11.5px;
                  padding: 4px 11px; border-radius: 6px; cursor: pointer;
