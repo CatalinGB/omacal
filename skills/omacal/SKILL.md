@@ -20,7 +20,9 @@ omacal events list --from 2026-09-01 --to 2026-09-05 --json
 omacal events show 41 --json         # ONE event whole (v0.7.4+): the guest
                                      # list with each person's answer,
                                      # organizer, join link, description
-omacal search quarterly review --json
+omacal search quarterly review --json   # event AND task titles (v5.3+): events
+                                     # nearest first, open tasks by due date;
+                                     # --json answers {"events":[…],"tasks":[…]}
 omacal calendars --json              # every calendar with ids
 omacal weather --json                # the app's forecast (v2.2+): place +
                                      # how it was decided, now, eight days
@@ -36,7 +38,9 @@ omacal cli-help                      # full usage and exit codes
 ```
 
 Always pass `--json` when consuming programmatically. Success:
-`{"ok":true,"data":[...]}`. Failure: `{"ok":false,"error":{"code","message"}}`.
+`{"ok":true,"data":…}` — a list for most commands, and
+`{"events":[…],"tasks":[…]}` for `search` (v5.3+). Failure:
+`{"ok":false,"error":{"code","message"}}`.
 
 "Who accepted / who's coming / is X invited?" → `events show ID` is the
 answer (list rows carry only a guest *count*). Its `guests` array gives
@@ -60,6 +64,12 @@ user that a reschedule will move the meeting for the other people** — on
 WebCal, local): OmaCal emails nobody there, so there is no notify question to ask the user, and `reach`
 is Google's model and says nothing reliable about who else sees a change. WebCal feeds are read-only
 subscriptions (Settings → Accounts → "Add WebCal account"); they never take writes, RSVPs, or tasks.
+
+`search`'s `tasks` (v5.3+) are `omacal tasks --json`'s own row shape (`id`,
+`summary`, `notes`, `due`, `dueMs`, `dueAllDay`, `overdue`, `completed`,
+`list`, `listId`, `canWrite`) for **open** tasks whose title matches, due
+first and undated last. A task has no occurrence, so there is no `startMs` on
+those rows — do not look for one.
 
 ## Writing (requires the app to be running; omacal v0.7+)
 

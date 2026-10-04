@@ -32,7 +32,7 @@
    *  A row opens in place for editing. That is the whole of what a task can
    *  be given here: a title, a due date, a note and the list it is on, which
    *  is exactly what a VTODO carries and this app can write back. */
-  let { onclose, width = TASKS_WIDTH_DEFAULT, onresize }: {
+  let { onclose, width = TASKS_WIDTH_DEFAULT, onresize, focusTaskId = null, onfocused }: {
     onclose: () => void;
     /** The panel's width in pixels (#130). The caller owns it, because the
      *  caller is what stores it. */
@@ -41,6 +41,12 @@
      *  on every move, so the panel follows the hand; the caller decides when
      *  to write it down. */
     onresize?: (px: number) => void;
+    /** A task a search result chose (2026-10-04): scroll to its row and flash
+     *  it. Non-null only in the moment after the choice; the pane reports it
+     *  handled so the caller can clear it and the same task can be re-landed. */
+    focusTaskId?: number | null;
+    /** Called once the focus above has been handled — found or not. */
+    onfocused?: () => void;
   } = $props();
 
   /** The edge is the control (#130), the way the grid's own zoom is a
@@ -86,6 +92,32 @@
   const lists = $derived(taskListRows());
   let note = $state<string | null>(null);
   let busyIds = $state<Set<number>>(new Set());
+
+  /** The row a search result just landed on, held long enough to flash. */
+  let focusFlash = $state<number | null>(null);
+
+  // A search result landing (2026-10-04): bring its row into view and flash
+  // it. It runs again when `tasks` arrives, because the click that chose the
+  // result also mounts this pane — the rows may still be loading when the
+  // focus lands, and a row that is not there yet is a reason to wait, not to
+  // give up. A task that is absent once the rows *are* here is reported
+  // handled anyway, so the caller's focus id does not stick forever.
+  $effect(() => {
+    const id = focusTaskId;
+    if (id === null) return;
+    const loaded = tasks; // depend on the rows, so a late load re-runs this
+    void tick().then(() => {
+      const el = document.getElementById(`task-${id}`);
+      if (el) {
+        el.scrollIntoView({ block: 'nearest' });
+        focusFlash = id;
+        setTimeout(() => { if (focusFlash === id) focusFlash = null; }, 1200);
+        onfocused?.();
+      } else if (loaded !== null) {
+        onfocused?.();
+      }
+    });
+  });
 
   type Grouping = 'when' | 'list';
   let grouping = $state<Grouping>('when');
@@ -700,7 +732,7 @@
               </div>
             </div>
           {:else}
-            <div class="row">
+            <div class="row" id={`task-${t.id}`} class:flash={focusFlash === t.id}>
               <input
                 type="checkbox"
                 checked={false}
@@ -921,6 +953,13 @@
   .count { font-size: 10.5px; color: var(--muted); }
 
   .row { display: flex; align-items: center; gap: 9px; padding: 6px; border-radius: 6px; }
+  /* A search result's row, flashed once so the eye finds it in the list; it
+     fades on its own, so it never becomes a selection the user did not make. */
+  .row.flash { animation: task-flash 1.2s ease-out; }
+  @keyframes task-flash {
+    from { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+    to { background: transparent; }
+  }
   .row:hover { background: color-mix(in srgb, var(--text) 3.5%, transparent); }
   /* A 2px tick of the list's colour: the same vocabulary the grid's blocks
      use for the calendar they belong to. */

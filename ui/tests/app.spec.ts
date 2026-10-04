@@ -3329,7 +3329,7 @@ test.describe('App', () => {
   // --- Search (spec §1, §6, §7) --------------------------------------------
 
   const search = (page: Page) => page.getByRole('dialog', { name: 'Search' });
-  const field = (page: Page) => page.getByLabel('Search events');
+  const field = (page: Page) => page.getByLabel('Search events and tasks');
   const results = (page: Page) => search(page).getByRole('listitem');
 
   test('slash opens search, and Escape closes it leaving the view alone', async ({ page }) => {
@@ -3511,6 +3511,47 @@ test.describe('App', () => {
     await expect(field(page)).toHaveValue('lunch');
     await expect(newForm(page), 'the n in lunch must not open a form').toHaveCount(0);
     await expect(search(page)).toBeVisible();
+  });
+
+  /**
+   * **A task is searchable too** (2026-10-04). A task has no occurrence and no
+   * grid block, so choosing one cannot move the calendar; it opens the Tasks
+   * pane and lands on the row — the same "you end up on the thing" the event
+   * popover gives, in the surface a task actually has.
+   */
+  test('a task result opens the Tasks pane on its row', async ({ page }) => {
+    await writable(page);
+    const title = await page.locator('h1').textContent();
+
+    await page.keyboard.press('/');
+    await field(page).fill('milk');
+    await expect(results(page)).toHaveCount(1);
+    await expect(results(page).first()).toContainText('Buy milk');
+    await results(page).first().getByRole('button').click();
+
+    await expect(search(page), 'search does not linger').toHaveCount(0);
+    const side = page.getByRole('complementary', { name: 'Tasks' });
+    await expect(side).toBeVisible();
+    await expect(page.locator('#task-11')).toHaveClass(/flash/);
+    expect(await page.locator('h1').textContent(), 'a task has no date to move to').toBe(title);
+  });
+
+  /**
+   * The headings name a kind only when there is another to tell it from: a
+   * lone section carries none, and both appear together when both match.
+   */
+  test('two headings when one query matches both kinds, none for a lone kind', async ({ page }) => {
+    await writable(page);
+    await page.keyboard.press('/');
+
+    await field(page).fill('milk'); // a task, and no event
+    await expect(search(page).getByRole('heading', { name: 'Tasks' })).toHaveCount(0);
+
+    // `e` is in "Standup review" and "Dentist", and in "Ship the release" and
+    // "Answer the issue" — both kinds, so both headings appear.
+    await field(page).fill('e');
+    await expect(search(page).getByRole('heading', { name: 'Events' })).toBeVisible();
+    await expect(search(page).getByRole('heading', { name: 'Tasks' })).toBeVisible();
   });
 
   // --- The filmstrip toggle (spec §1-§6) -----------------------------------
@@ -5234,7 +5275,7 @@ test.describe('App: the keyboard sheet', () => {
     // searched as "/sync". Asserting only that the overlay opened cannot see
     // it — the sweep proved that by deleting the `preventDefault` and staying
     // green. This runs under webkit too, which is where the bug lives.
-    await expect(page.getByRole('searchbox', { name: 'Search events' })).toHaveValue('');
+    await expect(page.getByRole('searchbox', { name: 'Search events and tasks' })).toHaveValue('');
   });
 });
 
