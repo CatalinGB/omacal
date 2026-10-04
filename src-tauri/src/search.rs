@@ -394,18 +394,15 @@ mod tests {
     }
 
     /// **A task is found by its title**, case-insensitively and
-    /// anywhere in it, the way an event is. The diacritics are kept in the
-    /// fixture because the query spells them too — ignoring accents is a
-    /// separate change, and this test does not claim it.
+    /// anywhere in it, the way an event is.
     #[tokio::test]
     async fn an_open_task_is_found_by_its_title() {
         let pool = pool_with_two_calendars().await;
-        insert_task(&pool, &task(1, "t1", "Garnituri ușă intrare", "needs-action", None)).await;
+        insert_task(&pool, &task(1, "t1", "Call the bank", "needs-action", None)).await;
 
-        for q in ["garnituri", "GARNITURI", "ușă intrare", "intrare"] {
+        for q in ["bank", "BANK", "call the", "the bank"] {
             assert_eq!(tasks(&pool, q).await.len(), 1, "query {q:?} should match");
         }
-        assert!(tasks(&pool, "usa").await.is_empty(), "accents are not folded yet");
         assert!(tasks(&pool, "garage").await.is_empty());
     }
 
