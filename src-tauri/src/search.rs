@@ -450,21 +450,34 @@ mod tests {
     }
 
     /// Due date first (earliest first), undated last, title as the tiebreak —
-    /// the sidebar's "By when" order flattened.
+    /// **not priority**. The store's own order puts priority ahead of summary,
+    /// so a due tie between a high-priority "Zulu" and a low-priority "Delta"
+    /// comes back Zulu first; the search re-sorts to Delta first, and that is
+    /// the half this fixture exists to reach.
     #[tokio::test]
-    async fn tasks_come_back_due_first_and_undated_last() {
+    async fn tasks_come_back_due_first_undated_last_and_ignore_priority_for_the_tie() {
         let pool = pool_with_two_calendars().await;
         insert_task(&pool, &task(1, "z", "Task Zebra", "needs-action", None)).await;
         insert_task(&pool, &task(1, "a", "Task Alpha", "needs-action", None)).await;
         insert_task(&pool, &task(1, "b", "Task Beta", "needs-action", None)).await;
         insert_task(&pool, &task(1, "m", "Task Mango", "needs-action", Some(NOW + DAY))).await;
         insert_task(&pool, &task(1, "p", "Task Apple", "needs-action", Some(NOW - DAY))).await;
+        // The same due date, and priority disagrees with the title rule.
+        let mut zulu = task(1, "z2", "Task Zulu", "needs-action", Some(NOW + 2 * DAY));
+        zulu.priority = 1;
+        let mut delta = task(1, "d", "Task Delta", "needs-action", Some(NOW + 2 * DAY));
+        delta.priority = 9;
+        insert_task(&pool, &zulu).await;
+        insert_task(&pool, &delta).await;
 
         let hits = tasks(&pool, "task").await;
         assert_eq!(
             hits.iter().map(|t| t.summary.as_str()).collect::<Vec<_>>(),
-            vec!["Task Apple", "Task Mango", "Task Alpha", "Task Beta", "Task Zebra"],
-            "earliest due first, undated last, ties by title",
+            vec![
+                "Task Apple", "Task Mango", "Task Delta", "Task Zulu",
+                "Task Alpha", "Task Beta", "Task Zebra",
+            ],
+            "earliest due first, undated last, ties by title rather than priority",
         );
     }
 
