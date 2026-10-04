@@ -661,12 +661,14 @@ pub struct DonePage {
 /// Whether a task matches what was typed into the Done list's search.
 ///
 /// Every word must appear, in the title or the note, in any order and any
-/// case — "bank call" finds "Call the bank". Case is folded by Rust, not by
-/// SQLite, whose `LOWER` knows ASCII only: a list kept in Bulgarian has to
-/// search like one kept in English. An empty query matches everything.
+/// case — "bank call" finds "Call the bank". Matching folds through
+/// [`omacal_core::fold`], the same fold the event search's `fold_ci` applies,
+/// so `usa` finds `ușă` here as it does there, and a list kept in Cyrillic or
+/// in Romanian searches like one kept in plain English. An empty query matches
+/// everything.
 pub(crate) fn matches_query(summary: &str, notes: Option<&str>, query: &str) -> bool {
-    let hay = format!("{}\n{}", summary, notes.unwrap_or("")).to_lowercase();
-    query.split_whitespace().all(|word| hay.contains(&word.to_lowercase()))
+    let hay = omacal_core::fold(&format!("{}\n{}", summary, notes.unwrap_or("")));
+    query.split_whitespace().all(|word| hay.contains(&omacal_core::fold(word)))
 }
 
 /// Completed tasks older than `before_ms`, newest first, filtered by `query`
@@ -989,8 +991,8 @@ mod tests {
         assert_eq!(unguarded, 1);
     }
 
-    /// The Done list's search: every word, anywhere, any case — including
-    /// the cases SQLite's `LOWER` would miss.
+    /// The Done list's search: every word, anywhere, any case — and accents
+    /// folded away, the same fold the event search applies.
     #[test]
     fn done_search_matches_every_word_in_the_title_or_the_note_in_any_case() {
         assert!(matches_query("Call the bank", None, ""), "an empty search is everything");
@@ -998,9 +1000,14 @@ mod tests {
         assert!(matches_query("Call the bank", None, "BANK call"), "any order, any case");
         assert!(matches_query("Pay rent", Some("to the landlord"), "rent landlord"), "the note counts");
         assert!(!matches_query("Call the bank", None, "bank rent"), "every word, not any word");
-        // Cyrillic: `LOWER('Обади')` in SQLite is still 'Обади'.
+        // Cyrillic: case folds, which SQLite's ASCII `LOWER` could not.
         assert!(matches_query("Обади се на банката", None, "БАНКАТА"));
+        // Accents fold in either spelling, and an unaccented query finds the
+        // accented title.
         assert!(matches_query("Élise's birthday", None, "élise"));
+        assert!(matches_query("Élise's birthday", None, "elise"));
+        assert!(matches_query("Garnituri ușă intrare", None, "garnituri usa intrare"));
+        assert!(!matches_query("Élise's birthday", None, "eliza"), "folding is not fuzzing");
     }
 
     /// Earlier done tasks come in pages, newest first, never repeating what

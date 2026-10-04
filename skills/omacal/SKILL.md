@@ -160,6 +160,10 @@ When showing the calendar to the user (not piping into a script):
 
 - Reads are safe always; writes only through the commands above — never
   touch the database file directly.
+- **Matching ignores case and accents**: `omacal search` and the Done list's
+  task search fold both the query and the text, so `usa intrare` finds
+  `ușă intrare`. Characters that cannot be decomposed (Turkish dotless `ı`,
+  `ß`, `ł`, `ø`) keep their identity — spell those as the text spells them.
 - Before any destructive write (delete, or update/respond on something
   ambiguous), confirm the exact event with the user by title and time.
 - Recurring events arrive already expanded: one row per occurrence in the
