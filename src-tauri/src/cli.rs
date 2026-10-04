@@ -726,7 +726,7 @@ fn print_rows_human(rows: &[Row]) {
 /// sidebar's: a task due today is due today all day, not late at 00:01.
 ///
 /// **A named struct, not an inline `json!`**, only so search can return the
-/// same rows it does: `omacal search` finds tasks too (2026-10-04), and a
+/// same rows it does: `omacal search` finds tasks too, and a
 /// second hand-built object would be a second contract to keep in step. The
 /// keys below are the whole task-row contract — `omacal tasks --json` and a
 /// search's `data.tasks` are the same shape on purpose.

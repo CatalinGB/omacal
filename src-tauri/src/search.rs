@@ -4,7 +4,7 @@
 //! answers *which events match* (`omacal_store::search_events` — titles, and
 //! only calendars the user displays), `omacal_core::search` answers *which
 //! occurrence and in what order* against a clock it is handed, and this file
-//! joins them. **Tasks are the fourth piece** (2026-10-04): an open task has no
+//! joins them. **Tasks are the fourth piece**: an open task has no
 //! occurrence, so it is matched here in Rust and ordered by due date, and the
 //! two kinds travel as two arrays — see [`SearchResults`].
 //!
@@ -23,7 +23,7 @@ use crate::AppState;
 
 /// What a search answers with: events and tasks, kept apart.
 ///
-/// **Two arrays, not one list** (2026-10-04). An event resolves to an
+/// **Two arrays, not one list**. An event resolves to an
 /// occurrence and is ordered by its distance from today; a task has no
 /// occurrence and is ordered by its due date. A single list would need one
 /// sort key that means both, and one pick handler that branches anyway — so
@@ -102,7 +102,7 @@ fn resolve(src: &StoredEvent, now_ms: i64) -> Interval {
 /// today" is the whole of the event ordering, and a function that read a clock
 /// could not be tested against a fixed one.
 ///
-/// **Titles only, both kinds** (search spec §2): an event's `summary`, and a
+/// **Titles only, both kinds** (spec §2): an event's `summary`, and a
 /// task's `summary` with `None` handed to `matches_query` as the note — so a
 /// word in a task's note is not a match, exactly as a word in an event's
 /// description is not. Tasks appear only while they are **open** and on a
@@ -393,7 +393,7 @@ mod tests {
         assert!(tasks(&pool, "   ").await.is_empty());
     }
 
-    /// **A task is found by its title** (2026-10-04), case-insensitively and
+    /// **A task is found by its title**, case-insensitively and
     /// anywhere in it, the way an event is. The diacritics are kept in the
     /// fixture because the query spells them too — ignoring accents is a
     /// separate change, and this test does not claim it.
@@ -481,5 +481,29 @@ mod tests {
         assert_eq!(results.tasks.len(), 1);
         assert_eq!(results.events[0].title, "Board prep");
         assert_eq!(results.tasks[0].summary, "Board pack");
+    }
+
+    /// **The wire shape**: two arrays under `events`/`tasks`, and a task row
+    /// that is `task_json`'s whole contract rather than a slimmer hit. The
+    /// `{ok, data}` envelope above it is `print_json`'s, shared by every
+    /// command and not search's to change — what search owns is what sits under
+    /// `data`, and that is what this pins.
+    #[tokio::test]
+    async fn the_wire_shape_is_two_arrays_and_a_task_row_is_the_whole_contract() {
+        let pool = pool_with_two_calendars().await;
+        insert(&pool, &row(1, "ev", "Board prep", NOW + DAY)).await;
+        insert_task(&pool, &task(1, "tk", "Board pack", "needs-action", Some(NOW))).await;
+
+        let results = search_impl(&pool, "board", NOW).await.unwrap();
+        let v = serde_json::to_value(&results).unwrap();
+
+        assert!(v["events"].is_array(), "events under its own key");
+        assert!(v["tasks"].is_array(), "tasks under its own key");
+        for key in [
+            "id", "summary", "notes", "due", "dueMs", "dueAllDay",
+            "overdue", "completed", "list", "listId", "canWrite",
+        ] {
+            assert!(v["tasks"][0].get(key).is_some(), "task row is missing {key}");
+        }
     }
 }

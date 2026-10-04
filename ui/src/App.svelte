@@ -367,7 +367,7 @@
    *  menu, closed from its own corner; the calendar keeps working either
    *  way, which is why this is a layout row and not a modal. */
   let tasksOpen = $state(false);
-  /** The task a search result landed on (2026-10-04): the pane opens to it,
+  /** The task a search result landed on: the pane opens to it,
    *  scrolled to and flashed. Cleared by the pane once it has handled it, so
    *  choosing the same task twice re-lands rather than staying a no-op. */
   let focusTaskId = $state<number | null>(null);
@@ -1377,7 +1377,7 @@
     }
   }
 
-  /** A task result (2026-10-04): search closes, the pane opens, and the row is
+  /** A task result: search closes, the pane opens, and the row is
    *  scrolled to and flashed by `TasksSidebar`. Landing on the row *is* the
    *  task's read surface, exactly as the popover is the event's — clicking the
    *  row still opens the editor. */

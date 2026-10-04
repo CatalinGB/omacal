@@ -3514,7 +3514,7 @@ test.describe('App', () => {
   });
 
   /**
-   * **A task is searchable too** (2026-10-04). A task has no occurrence and no
+   * **A task is searchable too**. A task has no occurrence and no
    * grid block, so choosing one cannot move the calendar; it opens the Tasks
    * pane and lands on the row — the same "you end up on the thing" the event
    * popover gives, in the surface a task actually has.

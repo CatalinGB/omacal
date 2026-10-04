@@ -41,7 +41,7 @@
      *  on every move, so the panel follows the hand; the caller decides when
      *  to write it down. */
     onresize?: (px: number) => void;
-    /** A task a search result chose (2026-10-04): scroll to its row and flash
+    /** A task a search result chose: scroll to its row and flash
      *  it. Non-null only in the moment after the choice; the pane reports it
      *  handled so the caller can clear it and the same task can be re-landed. */
     focusTaskId?: number | null;
@@ -96,7 +96,7 @@
   /** The row a search result just landed on, held long enough to flash. */
   let focusFlash = $state<number | null>(null);
 
-  // A search result landing (2026-10-04): bring its row into view and flash
+  // A search result landing: bring its row into view and flash
   // it. It runs again when `tasks` arrives, because the click that chose the
   // result also mounts this pane — the rows may still be loading when the
   // focus lands, and a row that is not there yet is a reason to wait, not to
