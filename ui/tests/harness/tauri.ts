@@ -669,6 +669,7 @@ type StubSettings = {
   syncIntervalMs: number;
   notificationsEnabled: boolean;
   taskNotificationsEnabled: boolean;
+  keepRemindersOnScreen: boolean;
   minSyncIntervalMs: number;
   listMode: boolean;
   combineIdenticalEvents: boolean;
@@ -742,6 +743,7 @@ const DEFAULT_SETTINGS: StubSettings = {
   syncIntervalMs: 5 * 60_000,
   notificationsEnabled: true,
   taskNotificationsEnabled: true,
+  keepRemindersOnScreen: false,
   minSyncIntervalMs: 60_000,
   // The backend's own shipped default (fallback spec §3).
   fallbackReminderMinutes: [60, 10],

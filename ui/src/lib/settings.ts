@@ -103,6 +103,10 @@ export type AppSettings = {
   /** Whether a task with a time announces itself when it comes due (#137).
    *  Its own switch, apart from the events one. */
   taskNotificationsEnabled: boolean;
+  /** Whether reminders and task announcements stay on screen until dismissed
+   *  (#150). Off until turned on; Linux only, since macOS's own alert style
+   *  is what decides there. */
+  keepRemindersOnScreen: boolean;
   minSyncIntervalMs: number;
   /** Whether Day, Week and Month draw as a list rather than a grid (filmstrip
    *  spec §4). No settings tab shows it — the control is the `▦`/`☰` beside the
@@ -276,6 +280,7 @@ export type SettingValues = {
   photonPlaces: boolean;
   notificationsEnabled: boolean;
   taskNotificationsEnabled: boolean;
+  keepRemindersOnScreen: boolean;
   trayIcon: boolean;
   appearance: Appearance;
   windowFrame: WindowFrame;
