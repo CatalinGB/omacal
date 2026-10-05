@@ -5927,7 +5927,8 @@ test.describe('the tasks sidebar', () => {
   test('a task takes a priority, and the row shows the word', async ({ page }) => {
     const side = await openTasks(page);
     await side.getByRole('button', { name: 'Buy milk' }).click();
-    await side.getByLabel('Priority').selectOption('1');
+    await side.getByRole('combobox', { name: 'Priority' }).click();
+    await side.getByRole('option', { name: 'High' }).click();
     await side.getByRole('button', { name: 'Save' }).click();
 
     await expect.poll(() => page.evaluate(() =>
@@ -5943,7 +5944,8 @@ test.describe('the tasks sidebar', () => {
     await side.getByRole('button', { name: 'Answer the issue' }).click();
     await side.getByRole('textbox', { name: 'Task title', exact: true })
       .fill('Answer the issue about the quarterly reconciliation and the invoices');
-    await side.getByLabel('Priority').selectOption('1');
+    await side.getByRole('combobox', { name: 'Priority' }).click();
+    await side.getByRole('option', { name: 'High' }).click();
     await side.getByRole('button', { name: 'Save' }).click();
     await expect(side.locator('.pchip', { hasText: /^High$/ })).toHaveCount(1);
     const overflow = await side.locator('.rows').evaluate((el) => el.scrollWidth - el.clientWidth);

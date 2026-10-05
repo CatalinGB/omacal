@@ -324,6 +324,13 @@
       : [{ id: t.calendarId, name: t.calendar, color: t.color }, ...all];
   };
 
+  /** The editor's priority picker: the four levels in the picker's shape.
+   *  Priority has no colour, so each row's `color` is null and the picker is
+   *  asked to leave the dot out. */
+  const priorityChoices: ListChoice[] = PRIORITY_CHOICES.map((c) => ({
+    id: c.value, name: c.label, color: null,
+  }));
+
   async function toggle(task: Task) {
     if (busyIds.has(task.id)) return;
     note = null;
@@ -713,20 +720,18 @@
                            isToday={draft.date === '' || draft.date === dateInputValue(Date.now())}
                            onchange={(v) => { if (v && draft.date === '') draft.date = dateInputValue(Date.now()); }} />
               </div>
-              <label class="efield">
+              <div class="efield">
                 <span class="elab">Priority</span>
-                <!-- A native select, so its keyboard behaviour is the
-                     platform's; the global rule gives it the chevron and the
-                     chrome below gives it the same field look as the date and
-                     time inputs. The raw value is what the app stores, 0 for
-                     none. -->
-                <select aria-label="Priority" disabled={saving}
-                        onchange={(e) => (draft = { ...draft, priority: Number(e.currentTarget.value) })}>
-                  {#each PRIORITY_CHOICES as c}
-                    <option value={c.value} selected={priorityOption(draft.priority) === c.value}>{c.label}</option>
-                  {/each}
-                </select>
-              </label>
+                <!-- A `ListPicker`, not a native `<select>`: in the webview GTK
+                     draws the open list (bigger type, the system's blue, none
+                     of the theme's colours), which is why the List above uses
+                     one. Priority has no colour, so `noDot` leaves the dot out.
+                     `priorityOption` maps a server's non-canonical value to its
+                     band for display; an untouched save still sends the raw. -->
+                <ListPicker compact noDot label="Priority" choices={priorityChoices}
+                            value={priorityOption(draft.priority)} disabled={saving}
+                            onpick={(id) => (draft = { ...draft, priority: id ?? 0 })} />
+              </div>
               <textarea class="enotes" aria-label="Notes" rows="2" placeholder="Notes"
                         bind:value={draft.notes} disabled={saving}></textarea>
               <div class="eact">
@@ -1015,19 +1020,10 @@
   .when { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
   .enotes { font: inherit; font-size: 11px; resize: vertical; padding: 6px 8px; border-radius: 5px;
             border: 1px solid var(--hairline); background: var(--bg); color: var(--text); }
-  /* The editor's one native select. The global `select` rule gives it the
-     chevron and `appearance: none`, but no font, colour, border or radius —
-     so without this it drew the platform's light widget beside the dark
-     DateField/TimeField. `background-color`, not the `background` shorthand,
-     which would clobber the global chevron. */
+  /* The editor's Priority field: a label above a `ListPicker`, which draws its
+     own chrome (the same control the List field beside it uses). */
   .efield { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
   .elab { font-size: 9.5px; color: var(--muted); letter-spacing: .05em; }
-  .efield select { font: inherit; font-size: 12.5px; color: var(--text);
-                   background-color: color-mix(in srgb, var(--text) 5%, transparent);
-                   border: 1px solid var(--hairline); border-radius: 5px;
-                   padding: 4px 22px 4px 6px; }
-  .efield select:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
-  .efield select:disabled { opacity: .5; cursor: default; }
   .eact { display: flex; justify-content: flex-end; gap: 6px; }
   .eact button { appearance: none; -webkit-appearance: none; font: inherit; font-size: 11.5px;
                  padding: 4px 11px; border-radius: 6px; cursor: pointer;
