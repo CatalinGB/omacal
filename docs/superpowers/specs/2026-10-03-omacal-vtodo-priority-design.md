@@ -37,8 +37,9 @@ untouched save re-emits identical bytes (no ETag churn).
 
 ## 3. What the user sees
 
-- **Editor**: a native `Priority` select under the due fields — None / Low /
-  Medium / High. Reuses the app's global select styling; no new control.
+- **Editor**: a `Priority` `ListPicker` under the due fields — None / Low /
+  Medium / High. The same control the List field uses, so the open list is
+  themed (a native `<select>`'s popup is drawn by GTK, not the page).
 - **Row**: a small word-chip ("High"/"Medium"/"Low") only when set, toned by
   level — the word carries the meaning, the tone is decoration, so it reads
   in greyscale. It costs a little row width; long titles ellipsise.
@@ -73,5 +74,5 @@ lists.
   socket field is optional so an older peer degrades to "leave unchanged".
 - `src-tauri/src/cli_tasks.rs` + `cli.rs`: the flag, the request, the catalog,
   and the two read shapes.
-- `ui/src/lib/tasks.ts` + `TasksSidebar.svelte`: the select, the chip, a pure
+- `ui/src/lib/tasks.ts` + `TasksSidebar.svelte`: the picker, the chip, a pure
   `sortTasks`, and the `task_sort` preference.
