@@ -49,9 +49,9 @@ USAGE
   omacal calendars [--json]                every calendar, with ids
   omacal tasks [--all] [--json]            what still needs doing, with ids
   omacal tasks lists [--json]              the lists a task can go on, with ids
-  omacal tasks add \"title\" [--list ID|NAME] [--due YYYY-MM-DD] [--at HH:MM]
+  omacal tasks add \"title\" [--list ID|NAME] [--due YYYY-MM-DD] [--at HH:MM] [--priority LEVEL]
   omacal tasks done ID | omacal tasks reopen ID
-  omacal tasks edit ID [--title T] [--due D|none] [--at HH:MM|none] [--notes N|none]
+  omacal tasks edit ID [--title T] [--due D|none] [--at HH:MM|none] [--notes N|none] [--priority LEVEL|none]
   omacal weather [--json]                  the app's forecast, and the place it is for
   omacal doctor [--json]                   diagnose this install
   omacal skill                             print the agent skill this binary carries
@@ -191,15 +191,15 @@ pub(crate) fn command_catalog() -> Vec<CommandInfo> {
         CommandInfo { name: "tasks lists", usage: "tasks lists", writes: false,
             description: "the task lists a task can be added to, with ids, where each is kept and how many tasks are open",
             flags: &["--json"] },
-        CommandInfo { name: "tasks add", usage: "tasks add \"title\" [--list ID|NAME] [--due D] [--at HH:MM]", writes: true,
+        CommandInfo { name: "tasks add", usage: "tasks add \"title\" [--list ID|NAME] [--due D] [--at HH:MM] [--priority LEVEL]", writes: true,
             description: "add a task to a list",
-            flags: &["--list", "--due", "--at", "--json"] },
+            flags: &["--list", "--due", "--at", "--priority", "--json"] },
         CommandInfo { name: "tasks done", usage: "tasks done|reopen ID", writes: true,
             description: "tick a task off, or put it back",
             flags: &["--json"] },
-        CommandInfo { name: "tasks edit", usage: "tasks edit ID [--title T] [--due D|none] [--at HH:MM|none] [--notes N|none]", writes: true,
-            description: "change a task's title, due date or note",
-            flags: &["--title", "--due", "--at", "--notes", "--json"] },
+        CommandInfo { name: "tasks edit", usage: "tasks edit ID [--title T] [--due D|none] [--at HH:MM|none] [--notes N|none] [--priority LEVEL|none]", writes: true,
+            description: "change a task's title, due date, note or priority",
+            flags: &["--title", "--due", "--at", "--notes", "--priority", "--json"] },
         CommandInfo { name: "weather", usage: "weather", writes: false,
             description: "the app's forecast: the place it is for and how that was decided, now, and eight days",
             flags: &["--json"] },
@@ -742,6 +742,8 @@ pub struct TaskHit {
     pub due_all_day: bool,
     pub overdue: bool,
     pub completed: bool,
+    /// The task's RFC 5545 priority: 1 highest … 9 lowest, 0 for none.
+    pub priority: i64,
     /// The list's name.
     pub list: String,
     pub list_id: i64,
@@ -759,6 +761,7 @@ pub(crate) fn task_json(row: &omacal_store::TaskRow, now_ms: i64, tz: &jiff::tz:
         due_all_day: t.due_all_day,
         overdue: task_overdue(t, now_ms, tz),
         completed: t.status == "completed",
+        priority: t.priority,
         list: row.calendar_summary.clone(),
         list_id: t.calendar_id,
         can_write: row.access_role != "reader",
@@ -855,8 +858,16 @@ pub(crate) fn task_lines(rows: &[&omacal_store::TaskRow], now_ms: i64, tz: &jiff
             }
         };
         let mark = if t.status == "completed" { "x" } else { " " };
+        // The level as a word, matching the window's row chip; a fixed-width
+        // slot so the columns line up whether or not a task has one.
+        let priority = match omacal_caldav::TaskPriority::from_wire(t.priority) {
+            Some(omacal_caldav::TaskPriority::High) => "high  ",
+            Some(omacal_caldav::TaskPriority::Medium) => "medium",
+            Some(omacal_caldav::TaskPriority::Low) => "low   ",
+            None => "      ",
+        };
         out.push(format!(
-            "{:>5}  [{mark}] {when}  {}  ({})",
+            "{:>5}  [{mark}] {when}  {priority}  {}  ({})",
             t.id,
             t.summary.clone().unwrap_or_else(|| "(untitled)".into()),
             r.calendar_summary,

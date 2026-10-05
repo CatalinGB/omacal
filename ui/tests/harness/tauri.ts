@@ -18,6 +18,7 @@ import type { TimeFormat } from '../../src/lib/timefmt';
 import type { WeekStartDay } from '../../src/lib/weekstart';
 import type { Appearance, StartOnLogin, WeekViewDays, WindowFrame } from '../../src/lib/settings';
 import type { View } from '../../src/lib/views';
+import type { TaskSort } from '../../src/lib/tasks';
 import type { EventCornerStyle } from '../../src/lib/appearance';
 import type { TemperatureUnit } from '../../src/lib/temperature';
 import { sliceWeek } from '../../src/lib/weekwindow';
@@ -697,6 +698,7 @@ type StubSettings = {
   defaultView: View;
   defaultViewFollowsLast: boolean;
   lastView: View;
+  taskSort: TaskSort;
   menubarDateFormat: import('../../src/lib/settings').AppSettings['menubarDateFormat'];
   menubarDateCustom: string;
   menubarLabelFormat: string;
@@ -778,6 +780,8 @@ const DEFAULT_SETTINGS: StubSettings = {
   defaultViewFollowsLast: false,
   // Nothing recorded yet reads as the same view the fixed default does.
   lastView: 'week',
+  // The order the pane has always used, until chosen.
+  taskSort: 'date',
   menubarDateFormat: 'general',
   menubarDateCustom: '%-d',
   menubarLabelFormat: '{title} @ {time}  {countdown}',
@@ -1428,7 +1432,8 @@ export function installTauriStub(scenario: string): Harness {
           id: 900 + taskRows.length, calendarId: listId, summary: args.summary as string,
           notes: null, dueMs: (args.dueMs as number | null) ?? null, dueAllDay: args.dueAllDay !== false,
           completed: false, completedMs: null,
-          calendar: list.name, color: list.color, priority: 0, canWrite: true,
+          calendar: list.name, color: list.color,
+          priority: (args.priority as number) ?? 0, canWrite: true,
         }];
         return taskRows;
       }
@@ -1476,6 +1481,9 @@ export function installTauriStub(scenario: string): Harness {
           dueMs: (args.dueMs as number | null) ?? null,
           dueAllDay: args.dueAllDay as boolean,
           notes: (args.notes as string | null) ?? null,
+          // Whole-state on the backend too: the window always sends the raw
+          // value, 0 for none.
+          priority: (args.priority as number) ?? 0,
           ...(to ? { calendarId: to.calendarId, calendar: to.name, color: to.color } : {}),
         } : t);
         return taskRows;

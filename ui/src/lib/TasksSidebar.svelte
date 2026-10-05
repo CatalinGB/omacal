@@ -11,8 +11,11 @@
   import { clockFormat } from './clock.svelte';
   import {
     createLocalTaskList, createTask, createTaskList, deleteTask, deleteTaskList, renameTaskList,
-    searchDoneTasks, setTaskCompleted, updateTask, type Task, type TaskList,
+    searchDoneTasks, setTaskCompleted, updateTask, sortTasks, priorityLabel, priorityOption,
+    PRIORITY_CHOICES, type Task, type TaskList, type TaskSort,
   } from './tasks';
+  import { taskSort, setTaskSort } from './tasksort.svelte';
+  import { setSetting } from './settings';
   import {
     refreshTasks, setTaskLists, setTaskRows, taskListRows, taskRevision, taskRows,
   } from './taskstore.svelte';
@@ -131,7 +134,7 @@
    *  another is picked (Plamen, 2026-09-18: the editor did not say which list
    *  a task was on, or offer another). */
   let editingId = $state<number | null>(null);
-  let draft = $state({ summary: '', date: '', time: '', notes: '', list: 0 });
+  let draft = $state({ summary: '', date: '', time: '', notes: '', list: 0, priority: 0 });
   /** The time field holds something that is not a time. Save waits for it:
    *  saving would quietly make the task all-day. */
   let timeInvalid = $state(false);
@@ -311,9 +314,10 @@
       warn: when === 'overdue',
       color: null as string | null,
       list: null as TaskList | null,
-      rows: open
-        .filter((t) => whenOf(t, nowMs, weekStartDay()) === when)
-        .sort((a, b) => (a.dueMs ?? Infinity) - (b.dueMs ?? Infinity)),
+      rows: sortTasks(
+        open.filter((t) => whenOf(t, nowMs, weekStartDay()) === when),
+        taskSort(),
+      ),
     })).filter((g) => g.rows.length > 0),
   );
   /** Every list, the empty ones too: a list just made has nothing on it yet,
@@ -325,9 +329,10 @@
       warn: false,
       color: l.color,
       list: l,
-      rows: open
-        .filter((t) => t.calendarId === l.calendarId)
-        .sort((a, b) => (a.dueMs ?? Infinity) - (b.dueMs ?? Infinity)),
+      rows: sortTasks(
+        open.filter((t) => t.calendarId === l.calendarId),
+        taskSort(),
+      ),
     })),
   );
   const groups = $derived(grouping === 'when' ? byWhen : byList);
@@ -350,6 +355,13 @@
       ? all
       : [{ id: t.calendarId, name: t.calendar, color: t.color }, ...all];
   };
+
+  /** The editor's priority picker: the four levels in the picker's shape.
+   *  Priority has no colour, so each row's `color` is null and the picker is
+   *  asked to leave the dot out. */
+  const priorityChoices: ListChoice[] = PRIORITY_CHOICES.map((c) => ({
+    id: c.value, name: c.label, color: null,
+  }));
 
   async function toggle(task: Task) {
     if (busyIds.has(task.id)) return;
@@ -533,6 +545,9 @@
       time: timeInputValue(task),
       notes: task.notes ?? '',
       list: task.calendarId,
+      // The raw stored value, so an untouched save writes the same integer
+      // back — a server's non-canonical 7 is preserved, not normalised.
+      priority: task.priority,
     };
   }
 
@@ -540,6 +555,14 @@
    *  day, not tomorrow-at-this-time. */
   function setQuick(kind: 'today' | 'tomorrow' | 'nextWeek') {
     draft = { ...draft, date: dateInputValue(quickDue(kind, nowMs)), time: '' };
+  }
+
+  /** The order switch: repaint at once through the rune, and persist. A
+   *  failed write leaves the new order on screen and the old one stored; the
+   *  next load restores it, which is the honest outcome for a preference. */
+  function chooseSort(sort: TaskSort) {
+    setTaskSort(sort);
+    void setSetting('taskSort', sort).catch((e) => (note = String(e)));
   }
 
   async function save() {
@@ -551,7 +574,7 @@
     try {
       setTaskRows(await updateTask(
         editingId, draft.summary, ms, allDay, draft.notes.trim() || null,
-        draft.list !== from ? draft.list : null,
+        draft.list !== from ? draft.list : null, draft.priority,
       ));
       nowMs = Date.now();
       editingId = null;
@@ -600,6 +623,14 @@
               onclick={() => (grouping = 'when')}>By when</button>
       <button class:on={grouping === 'list'} aria-pressed={grouping === 'list'}
               onclick={() => (grouping = 'list')}>By list</button>
+    </div>
+    <!-- A second view switch, orthogonal to grouping: it orders the rows
+         *within* a group, and is kept. -->
+    <div class="seg" role="group" aria-label="Order tasks">
+      <button class:on={taskSort() === 'date'} aria-pressed={taskSort() === 'date'}
+              onclick={() => chooseSort('date')}>Date</button>
+      <button class:on={taskSort() === 'priority'} aria-pressed={taskSort() === 'priority'}
+              onclick={() => chooseSort('priority')}>Priority</button>
     </div>
     <button class="close" aria-label="Close tasks" onclick={onclose}>×</button>
   </div>
@@ -721,6 +752,18 @@
                            isToday={draft.date === '' || draft.date === dateInputValue(Date.now())}
                            onchange={(v) => { if (v && draft.date === '') draft.date = dateInputValue(Date.now()); }} />
               </div>
+              <div class="efield">
+                <span class="elab">Priority</span>
+                <!-- A `ListPicker`, not a native `<select>`: in the webview GTK
+                     draws the open list (bigger type, the system's blue, none
+                     of the theme's colours), which is why the List above uses
+                     one. Priority has no colour, so `noDot` leaves the dot out.
+                     `priorityOption` maps a server's non-canonical value to its
+                     band for display; an untouched save still sends the raw. -->
+                <ListPicker compact noDot label="Priority" choices={priorityChoices}
+                            value={priorityOption(draft.priority)} disabled={saving}
+                            onpick={(id) => (draft = { ...draft, priority: id ?? 0 })} />
+              </div>
               <textarea class="enotes" aria-label="Notes" rows="2" placeholder="Notes"
                         bind:value={draft.notes} disabled={saving}></textarea>
               <div class="eact">
@@ -746,6 +789,12 @@
               <button class="title" disabled={!t.canWrite}
                       onpointerdown={(e) => pressTask(t, e)}
                       onclick={() => { if (!carriedNotClicked) edit(t); }}>{t.summary}</button>
+              {#if priorityLabel(t.priority)}
+                <!-- The word carries the level; the tone is decoration, so it
+                     reads in greyscale and to a screen reader. -->
+                <span class="pchip {priorityLabel(t.priority)!.toLowerCase()}"
+                      aria-label="Priority: {priorityLabel(t.priority)}">{priorityLabel(t.priority)}</span>
+              {/if}
               {#if t.dueMs !== null}
                 <span class="due" class:overdue={isOverdue(t, nowMs)}>
                   {dueLabel(t, nowMs, clockFormat(), dateFormat())}
@@ -978,6 +1027,14 @@
            text-overflow: ellipsis; background: var(--surface); border: 1px solid var(--accent);
            box-shadow: 0 6px 20px rgba(0, 0, 0, .35); }
   .carry.nowhere { opacity: .55; border-color: var(--hairline); }
+  /* The word carries the level; the tone is decoration. Sits between title and
+     due, `flex: 0 0 auto` so it never pushes the due date off. */
+  .pchip { flex: 0 0 auto; font-size: 10px; font-weight: 600; line-height: 1;
+           padding: 1px 6px; border-radius: 999px; border: 1px solid currentColor;
+           white-space: nowrap; }
+  .pchip.high { color: var(--error); }
+  .pchip.medium { color: var(--accent); }
+  .pchip.low { color: var(--muted); }
   .due { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums;
          white-space: nowrap; }
   .due.overdue { color: var(--error); }
@@ -1002,6 +1059,10 @@
   .when { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
   .enotes { font: inherit; font-size: 11px; resize: vertical; padding: 6px 8px; border-radius: 5px;
             border: 1px solid var(--hairline); background: var(--bg); color: var(--text); }
+  /* The editor's Priority field: a label above a `ListPicker`, which draws its
+     own chrome (the same control the List field beside it uses). */
+  .efield { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .elab { font-size: 9.5px; color: var(--muted); letter-spacing: .05em; }
   .eact { display: flex; justify-content: flex-end; gap: 6px; }
   .eact button { appearance: none; -webkit-appearance: none; font: inherit; font-size: 11.5px;
                  padding: 4px 11px; border-radius: 6px; cursor: pointer;

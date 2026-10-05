@@ -49,6 +49,7 @@
   import { padFor, sliceWeek, visibleIndex, windowHeld } from './lib/weekwindow';
   import { setClockFormat } from './lib/clock.svelte';
   import { setSecondZone } from './lib/secondzone.svelte';
+  import { setTaskSort } from './lib/tasksort.svelte';
   import { setZoneName, zoneName } from './lib/zonename.svelte';
   import { setWeekStartDay } from './lib/weekstartstore.svelte';
   import { setTemperatureUnit } from './lib/tempunit.svelte';
@@ -869,6 +870,7 @@
         applyVisibleHours(s.visibleStartHour, s.visibleEndHour);
         setDateFormat(s.dateFormat);
         setSecondZone(s.secondTimezone);
+        setTaskSort(s.taskSort);
         setZoneName(s.effectiveTimezone);
         setTemperatureUnit(s.temperatureUnit);
         if (appearanceChoices === appearanceBefore) applyAppearance(s);
@@ -2206,6 +2208,7 @@
       applyVisibleHours(s.visibleStartHour, s.visibleEndHour);
       setDateFormat(s.dateFormat);
       setSecondZone(s.secondTimezone);
+      setTaskSort(s.taskSort);
       setZoneName(s.effectiveTimezone);
       setTemperatureUnit(s.temperatureUnit);
       weekViewChoices += 1;

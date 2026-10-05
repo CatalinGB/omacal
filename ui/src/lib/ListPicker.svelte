@@ -18,7 +18,7 @@
    *  clip it, and driven from the keyboard as a select-only combobox (ARIA's
    *  pattern): the focus stays on the field and the arrows move through the
    *  rows. */
-  let { label, choices, value, disabled = false, compact = false, dotOnly = false, onpick }: {
+  let { label, choices, value, disabled = false, compact = false, dotOnly = false, noDot = false, onpick }: {
     /** The control's name, which a screen reader says before its answer. */
     label: string;
     choices: ListChoice[];
@@ -30,6 +30,9 @@
      *  2026-09-18: a dot and a name took the add row's room). The name stays
      *  in the field for a screen reader, and in its tooltip. */
     dotOnly?: boolean;
+    /** Leave the colour dot out altogether, for a picker whose choices carry
+     *  no colour (a task's priority). */
+    noDot?: boolean;
     onpick: (id: number | null) => void;
   } = $props();
 
@@ -106,7 +109,7 @@
     onclick={() => (open ? (open = false) : show())}
     onkeydown={onKey}
   >
-    {@render dot(chosen)}
+    {#if !noDot}{@render dot(chosen)}{/if}
     <span class="name" class:sr={dotOnly}>{chosen?.name ?? ''}</span>
     {#if !dotOnly}
       <svg class="chev" viewBox="0 0 10 10" width="9" height="9" aria-hidden="true" focusable="false">
@@ -138,7 +141,7 @@
           onpointermove={() => (active = i)}
           onclick={() => pick(c)}
         >
-          {@render dot(c)}
+          {#if !noDot}{@render dot(c)}{/if}
           <span class="name">{c.name}</span>
           {#if c.id === value}<span class="check" aria-hidden="true">✓</span>{/if}
         </button>
