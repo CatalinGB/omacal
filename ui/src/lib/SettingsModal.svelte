@@ -617,6 +617,17 @@
     }
   }
 
+  /** #150's switch, the same shape and repair as the two above. */
+  async function toggleKeepReminders(on: boolean) {
+    note = null;
+    try {
+      settings = await setSetting('keepRemindersOnScreen', on);
+    } catch (e) {
+      note = { text: String(e), kind: 'error' };
+      settings = settings ? { ...settings } : null;
+    }
+  }
+
   async function toggleNotifications(on: boolean) {
     note = null;
     try {
@@ -1935,6 +1946,25 @@
         own alarm asks, for one made on a phone. Tasks due on a date rather
         than at a time say nothing.
       </p>
+      <!-- #150. Not on macOS: Notification Center takes no "stay" request
+           from an app; whether a toast lingers is the user's alert style for
+           OmaCal in System Settings, so a checkbox here would move nothing. -->
+      {#if settings?.desktop !== 'macos'}
+        <label class="check">
+          <input
+            type="checkbox"
+            checked={settings?.keepRemindersOnScreen ?? false}
+            disabled={!settings}
+            onchange={(e) => toggleKeepReminders(e.currentTarget.checked)}
+          />
+          Keep reminders on screen until dismissed
+        </label>
+        <p class="hint">
+          Reminders and task announcements stay until you click or close them,
+          rather than fading after a few seconds. Do not disturb still holds
+          them back.
+        </p>
+      {/if}
       <!-- What fires is still each event's own Google reminders — with one
            addition this tab owns (fallback spec §1): when a timed event
            follows its calendar's defaults and the calendar has none, the rows

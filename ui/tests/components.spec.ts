@@ -1916,6 +1916,33 @@ test.describe('Header', () => {
     await expect(again.getByLabel('Show reminders')).toBeChecked();
   });
 
+  /** #150: reminders that stay until dismissed, off until asked for. */
+  test('Notifications can keep reminders on screen until dismissed', async ({ page }) => {
+    await page.goto(show('Header', 'connected'));
+    const modal = await openSettings(page, 'Notifications');
+    const keep = modal.getByLabel('Keep reminders on screen until dismissed');
+    await expect(keep, 'off until turned on').not.toBeChecked();
+    await expect(modal).toContainText('Do not disturb still holds them back');
+
+    await keep.check();
+    await expect.poll(() => page.evaluate(() =>
+      (window as any).__harness.settingValues('keepRemindersOnScreen').pop(),
+    )).toBe(true);
+    await page.keyboard.press('Escape');
+    const again = await openSettings(page, 'Notifications');
+    await expect(again.getByLabel('Keep reminders on screen until dismissed')).toBeChecked();
+  });
+
+  /** macOS decides banner-or-alert itself, per app, in System Settings — a
+   *  checkbox there would move nothing, so there is none. */
+  test('Notifications offers no keep-on-screen switch on macOS', async ({ page }) => {
+    await page.addInitScript(([k, d]) => sessionStorage.setItem(k, JSON.stringify({ desktop: d })), ['omacal-stub-settings', 'macos'] as const);
+    await page.goto(show('Header', 'connected'));
+    const modal = await openSettings(page, 'Notifications');
+    await expect(modal.getByLabel('Show reminders')).toBeVisible();
+    await expect(modal.getByLabel('Keep reminders on screen until dismissed')).toHaveCount(0);
+  });
+
   test('Notifications says when the fallback speaks, and when it never does', async ({ page }) => {
     // The tab used to promise "no policy of omacal's own"; the fallback is
     // exactly such a policy, adopted deliberately (fallback spec §1), so the

@@ -14,6 +14,7 @@ use crate::AppState;
 const SYNC_INTERVAL_KEY: &str = "sync_interval_ms";
 const NOTIFICATIONS_KEY: &str = "notifications_enabled";
 const TASK_NOTIFICATIONS_KEY: &str = "task_notifications_enabled";
+const KEEP_REMINDERS_KEY: &str = "keep_reminders_on_screen";
 const LIST_MODE_KEY: &str = "list_mode";
 const SHOW_DATE_KEY: &str = "show_date";
 const HOUR_HEIGHT_KEY: &str = "hour_height";
@@ -477,6 +478,12 @@ pub struct AppSettings {
     /// Its own switch, not the events one: somebody may want meeting
     /// reminders and no task nagging, or the other way round.
     pub task_notifications_enabled: bool,
+    /// Whether reminders and task announcements stay on screen until
+    /// dismissed (#150). Off by default, `notify::Notification::sticky`'s
+    /// reasoning: a reminder is about a moment, and for most people one that
+    /// lingers past it is a nag. For the person away from the desk, or on the
+    /// other monitor, eight seconds is a missed meeting.
+    pub keep_reminders_on_screen: bool,
     /// The floor, published rather than duplicated in the UI. The form has to
     /// say what the minimum is in order to refuse a smaller one with a reason,
     /// and a second copy of the number in TypeScript is one that drifts.
@@ -811,6 +818,9 @@ pub(crate) async fn read_settings_with(pool: &SqlitePool, baseline: u8) -> AppSe
             .await
             .map(|v| v != "0")
             .unwrap_or(true),
+        // Off unless turned on: only an exact "1" holds reminders on screen,
+        // so a stray value keeps today's behaviour.
+        keep_reminders_on_screen: read(pool, KEEP_REMINDERS_KEY).await.as_deref() == Some("1"),
         min_sync_interval_ms: crate::sync_loop::MIN_INTERVAL_MS,
         // **The grid is what a calendar looks like until somebody says
         // otherwise**, so the absent row reads as off — the opposite polarity
@@ -1361,6 +1371,9 @@ pub enum Setting {
     /// The task half of the switch above (#137), stored separately so either
     /// can be off while the other speaks.
     TaskNotificationsEnabled(bool),
+    /// Reminders and task announcements stay until dismissed (#150). Read by
+    /// the notify loop at each pass, so it needs no restart.
+    KeepRemindersOnScreen(bool),
     /// Applied to the running tray in the same breath — a visibility toggle
     /// that only took effect next launch would read as broken every time.
     TrayIcon(bool),
@@ -1540,6 +1553,7 @@ pub(crate) async fn store(pool: &SqlitePool, setting: &Setting) -> Result<(), Se
         S::PhotonPlaces(on) => write(pool, PHOTON_PLACES_KEY, flag(*on)).await?,
         S::NotificationsEnabled(on) => write(pool, NOTIFICATIONS_KEY, flag(*on)).await?,
         S::TaskNotificationsEnabled(on) => write(pool, TASK_NOTIFICATIONS_KEY, flag(*on)).await?,
+        S::KeepRemindersOnScreen(on) => write(pool, KEEP_REMINDERS_KEY, flag(*on)).await?,
         S::TrayIcon(on) => write(pool, TRAY_ICON_KEY, flag(*on)).await?,
         S::Appearance(a) => write(pool, APPEARANCE_KEY, a.as_str()).await?,
         S::WindowFrame(frame) => write(pool, WINDOW_FRAME_KEY, frame.as_str()).await?,
@@ -1772,6 +1786,7 @@ mod tests {
             Setting::MenubarSections { tomorrow: true, days_ahead: 2, .. }
         ));
         assert!(matches!(read(json!({"key": "visibleHours", "value": {"start": 6, "end": 22}})), Setting::VisibleHours { start: 6, end: 22 }));
+        assert!(matches!(read(json!({"key": "keepRemindersOnScreen", "value": true})), Setting::KeepRemindersOnScreen(true)));
         assert!(matches!(
             read(json!({"key": "menubarDateFormat", "value": {"format": "custom", "custom": "%-d"}})),
             Setting::MenubarDateFormat { .. }
@@ -2669,6 +2684,21 @@ mod tests {
         let s = read_settings(&p).await;
         assert!(s.task_notifications_enabled);
         assert!(!s.notifications_enabled);
+    }
+
+    /// #150: off on a fresh install, on through `Setting`, and a stray value
+    /// keeps reminders expiring as they always have.
+    #[tokio::test]
+    async fn keeping_reminders_on_screen_is_opt_in() {
+        let p = pool().await;
+        assert!(!read_settings(&p).await.keep_reminders_on_screen, "off until asked for");
+        let s = set(&p, Setting::KeepRemindersOnScreen(true)).await.unwrap();
+        assert!(s.keep_reminders_on_screen);
+        assert_eq!(read(&p, KEEP_REMINDERS_KEY).await.as_deref(), Some("1"));
+        let s = set(&p, Setting::KeepRemindersOnScreen(false)).await.unwrap();
+        assert!(!s.keep_reminders_on_screen);
+        write(&p, KEEP_REMINDERS_KEY, "yes").await.unwrap();
+        assert!(!read_settings(&p).await.keep_reminders_on_screen, "a stray value changes nothing");
     }
 
     /// A value nobody here wrote — hand-edited, or from a future version —

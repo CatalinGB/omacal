@@ -288,11 +288,11 @@ async fn run_events(
             continue;
         }
 
-        if let Err(e) = notifier.post(&crate::notify::notification_for_format(
-            &d,
-            tz,
-            settings.time_format,
-        )) {
+        let mut note = crate::notify::notification_for_format(&d, tz, settings.time_format);
+        // Expiring is a reminder's default, not its nature (#150): the user
+        // who asked keeps it until they dismiss it.
+        note.sticky = settings.keep_reminders_on_screen;
+        if let Err(e) = notifier.post(&note) {
             // Logged and dropped. Never a banner, never a retry — see this
             // function's own doc comment for why the reminder is still
             // recorded below.
@@ -351,11 +351,11 @@ async fn run_tasks(
             continue;
         }
 
-        if let Err(e) = notifier.post(&crate::notify::task_notification_for_format(
-            &d,
-            tz,
-            settings.time_format,
-        )) {
+        let mut note = crate::notify::task_notification_for_format(&d, tz, settings.time_format);
+        // The same switch as a reminder's (#150): one preference for "keep
+        // what OmaCal tells me on screen", not one per kind.
+        note.sticky = settings.keep_reminders_on_screen;
+        if let Err(e) = notifier.post(&note) {
             tracing::warn!(%e, task_id = d.key.task_id, "could not announce a task");
         }
 
@@ -1073,6 +1073,31 @@ mod tests {
         let again = run_once(&pool, false, T0900Z + MINUTE, HORIZON_MS, SOFIA, &fake).await.unwrap();
         assert!(again.posted_tasks.is_empty());
         assert_eq!(fake.posted().len(), 1);
+    }
+
+    /// #150: "keep reminders on screen" reaches both kinds through the pass —
+    /// a meeting's reminder and a task's announcement — and without it both
+    /// expire as they always have.
+    #[tokio::test]
+    async fn keeping_reminders_on_screen_makes_both_kinds_sticky() {
+        let pool = seeded(SOFIA, "[]").await;
+        omacal_store::upsert_event(&pool, &event("e1", T0900Z, T0900Z + HOUR, own(10)))
+            .await.unwrap();
+        seed_task(&pool, "t-1", "Call the bank", T0900Z, "").await;
+
+        let fake = crate::notify::RecordingNotifier::default();
+        run_once(&pool, false, T0900Z - 10 * MINUTE, HORIZON_MS, SOFIA, &fake).await.unwrap();
+        assert_eq!(fake.posted().len(), 1, "the reminder");
+        assert!(!fake.posted()[0].sticky, "off until asked for");
+
+        sqlx::query("INSERT INTO settings (key, value) VALUES ('keep_reminders_on_screen', '1')")
+            .execute(&pool).await.unwrap();
+        omacal_store::upsert_event(&pool, &event("e2", T0900Z, T0900Z + HOUR, own(5)))
+            .await.unwrap();
+        run_once(&pool, false, T0900Z, HORIZON_MS, SOFIA, &fake).await.unwrap();
+        let posted = fake.posted();
+        assert_eq!(posted.len(), 3, "the second reminder and the task");
+        assert!(posted[1..].iter().all(|n| n.sticky), "{:?}", posted[1..].iter().map(|n| &n.title).collect::<Vec<_>>());
     }
 
     /// A task carrying an alarm of its own speaks when the alarm does, so the

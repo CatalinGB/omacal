@@ -4,21 +4,25 @@
   import { dateFormat } from './date.svelte';
   import { onMount } from 'svelte';
   import { escapeCloses } from './dismiss.svelte';
-  import { searchEvents, type Hit } from './search';
+  import { search, type SearchResults, type TaskHit, type Pick } from './search';
+
+  /** What choosing a result hands up. The two kinds land differently — an
+   *  event on the calendar's popover, a task in the Tasks pane — so the kind
+   *  travels with the hit rather than being inferred from its shape. */
 
   let {
     onclose,
     onpick,
   }: {
     onclose: () => void;
-    /** A result was chosen. The caller moves the calendar and opens the
-     *  popover — this panel finds things and hands one over, exactly as
-     *  `WeekGrid` hands up a drag rather than writing it. */
-    onpick: (hit: Hit) => void;
+    /** A result was chosen. The caller lands on it — this panel finds things
+     *  and hands one over, exactly as `WeekGrid` hands up a drag rather than
+     *  writing it. */
+    onpick: (pick: Pick) => void;
   } = $props();
 
   let query = $state('');
-  let hits = $state<Hit[]>([]);
+  let result = $state<SearchResults>({ events: [], tasks: [] });
   let error = $state<string | null>(null);
   let fieldEl: HTMLInputElement | undefined = $state();
 
@@ -45,20 +49,20 @@
   async function run(q: string) {
     const mine = ++issued;
     if (q.trim() === '') {
-      hits = [];
+      result = { events: [], tasks: [] };
       error = null;
       return;
     }
     try {
-      const found = await searchEvents(q);
+      const found = await search(q);
       // Superseded: a later keystroke has already asked its own question, and
       // its answer is the one that belongs on screen.
       if (mine !== issued) return;
-      hits = found;
+      result = found;
       error = null;
     } catch (e) {
       if (mine !== issued) return;
-      hits = [];
+      result = { events: [], tasks: [] };
       error = String(e);
     }
   }
@@ -69,11 +73,23 @@
   // exists. See `escapeCloses` for why the listener is on `window`.
   escapeCloses(() => true, () => onclose());
 
+  const hasEvents = $derived(result.events.length > 0);
+  const hasTasks = $derived(result.tasks.length > 0);
+  /** The headings name a kind only when there is another to tell it from: one
+   *  section needs no label, two do. */
+  const sectioned = $derived(hasEvents && hasTasks);
+  const empty = $derived(query.trim() !== '' && !hasEvents && !hasTasks);
+
   /** The day a result sits on, for the line under its title. */
   const when = (ms: number) =>
     formatDate(new Date(ms).getTime(), dateFormat(), {
       weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
     });
+
+  /** A task has no occurrence, so its line is its due date — or an honest
+   *  "No date" rather than a blank. */
+  const whenTask = (t: TaskHit) =>
+    t.dueMs === null ? 'No date' : when(t.dueMs);
 </script>
 
 <!--
@@ -90,27 +106,47 @@
     bind:value={query}
     oninput={() => run(query)}
     type="search"
-    aria-label="Search events"
-    placeholder="Search event titles"
+    aria-label="Search events and tasks"
+    placeholder="Search events and tasks"
     autocomplete="off"
     spellcheck="false"
   />
 
   {#if error}
     <p class="err" data-testid="search-error">{error}</p>
-  {:else if query.trim() !== '' && hits.length === 0}
+  {:else if empty}
     <p class="none">Nothing matches “{query.trim()}”.</p>
-  {:else if hits.length > 0}
-    <ul>
-      {#each hits as h (h.eventId)}
-        <li>
-          <button class="hit" onclick={() => onpick(h)}>
-            <b>{h.title}</b>
-            <em>{when(h.startMs)}</em>
-          </button>
-        </li>
-      {/each}
-    </ul>
+  {:else if hasEvents || hasTasks}
+    {#if hasEvents}
+      <section class="sec">
+        {#if sectioned}<h3>Events</h3>{/if}
+        <ul>
+          {#each result.events as h (h.eventId)}
+            <li>
+              <button class="hit" onclick={() => onpick({ kind: 'event', hit: h })}>
+                <b>{h.title}</b>
+                <em>{when(h.startMs)}</em>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
+    {#if hasTasks}
+      <section class="sec">
+        {#if sectioned}<h3>Tasks</h3>{/if}
+        <ul>
+          {#each result.tasks as t (t.id)}
+            <li>
+              <button class="hit" onclick={() => onpick({ kind: 'task', hit: t })}>
+                <b>{t.summary}</b>
+                <em>{whenTask(t)} · {t.list}</em>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
   {/if}
 </div>
 
@@ -132,6 +168,13 @@
           border: 0; border-bottom: 1px solid var(--hairline);
           padding: 12px 14px; width: 100%; box-sizing: border-box; flex: none; }
   input:focus { outline: none; }
+
+  .sec { display: flex; flex-direction: column; min-height: 0; }
+  /* The second section under the first, divided by the same hairline the
+     field uses, so two sections read as two without a second weight. */
+  .sec + .sec { border-top: 1px solid var(--hairline); }
+  h3 { margin: 0; padding: 6px 14px 2px; font-size: 10px; font-weight: 600;
+       letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 
   ul { list-style: none; margin: 0; padding: 4px; overflow-y: auto; }
   .hit { display: flex; flex-direction: column; gap: 1px; width: 100%; text-align: left;

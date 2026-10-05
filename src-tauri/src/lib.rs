@@ -1789,7 +1789,7 @@ pub fn run() {
             calendars::set_calendar_sync,
             calendars::set_calendar_color,
             calendars::set_calendar_label,
-            search::search_events,
+            search::search,
             events::known_guests,
             geocode::search_places,
             settings::get_settings,
