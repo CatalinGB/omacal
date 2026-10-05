@@ -4,7 +4,9 @@
 //! answers *which events match* (`omacal_store::search_events` — titles, and
 //! only calendars the user displays), `omacal_core::search` answers *which
 //! occurrence and in what order* against a clock it is handed, and this file
-//! joins them.
+//! joins them. **Tasks are the fourth piece**: an open task has no
+//! occurrence, so it is matched here in Rust and ordered by due date, and the
+//! two kinds travel as two arrays — see [`SearchResults`].
 //!
 //! **No write path, no network** (spec §7). This is a `SELECT` and some
 //! arithmetic. A search that synced first would be slow and surprising, and a
@@ -16,7 +18,23 @@ use omacal_core::layout::Interval;
 use omacal_store::StoredEvent;
 use sqlx::SqlitePool;
 
+use crate::cli::{task_json, TaskHit};
 use crate::AppState;
+
+/// What a search answers with: events and tasks, kept apart.
+///
+/// **Two arrays, not one list**. An event resolves to an
+/// occurrence and is ordered by its distance from today; a task has no
+/// occurrence and is ordered by its due date. A single list would need one
+/// sort key that means both, and one pick handler that branches anyway — so
+/// the kinds stay separate all the way out, and the CLI and the overlay render
+/// them as two sections.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SearchResults {
+    pub events: Vec<Hit>,
+    pub tasks: Vec<TaskHit>,
+}
+
 
 /// How wide a net to cast when resolving a recurring match to one occurrence.
 ///
@@ -77,26 +95,35 @@ fn resolve(src: &StoredEvent, now_ms: i64) -> Interval {
     nearest(&far, now_ms).unwrap_or(own)
 }
 
-/// Events whose title contains `query`, nearest first.
+/// Everything whose **title** contains `query`: events nearest first, open
+/// tasks by due date.
 ///
 /// `now_ms` is a parameter for the reason `due_reminders` takes one: "nearest
-/// today" is the whole of the ordering, and a function that read a clock could
-/// not be tested against a fixed one.
-pub(crate) async fn search(
+/// today" is the whole of the event ordering, and a function that read a clock
+/// could not be tested against a fixed one.
+///
+/// **Titles only, both kinds** (spec §2): an event's `summary`, and a
+/// task's `summary` with `None` handed to `matches_query` as the note — so a
+/// word in a task's note is not a match, exactly as a word in an event's
+/// description is not. Tasks appear only while they are **open** and on a
+/// `selected` list (`tasks_for_ui` already carries both, and filters the rest
+/// out), because "what do I still have to do" is the question a task search is
+/// for.
+pub(crate) async fn search_impl(
     pool: &SqlitePool,
     query: &str,
     now_ms: i64,
-) -> anyhow::Result<Vec<Hit>> {
+) -> anyhow::Result<SearchResults> {
     // An empty query is not "match everything" — `LIKE '%%'` would return the
     // entire database, and the overlay asks on every keystroke including the
     // one that empties the field.
-    if query.trim().is_empty() {
-        return Ok(Vec::new());
+    let q = query.trim();
+    if q.is_empty() {
+        return Ok(SearchResults { events: Vec::new(), tasks: Vec::new() });
     }
 
-    let rows = omacal_store::search_events(pool, query.trim()).await?;
-
-    let mut hits: Vec<Hit> = rows
+    let rows = omacal_store::search_events(pool, q).await?;
+    let mut events: Vec<Hit> = rows
         .iter()
         .map(|src| {
             let iv = resolve(src, now_ms);
@@ -108,20 +135,40 @@ pub(crate) async fn search(
             }
         })
         .collect();
+    by_distance(&mut events, now_ms);
 
-    by_distance(&mut hits, now_ms);
-    Ok(hits)
+    // The zone a task's "late" is read in; the same `TimeZone::system()` the
+    // CLI's own `tasks` read uses, and the window ignores the formatted `due`
+    // in favour of `due_ms`.
+    let tz = jiff::tz::TimeZone::system();
+    let rows = omacal_store::tasks_for_ui(pool, now_ms).await?;
+    let mut tasks: Vec<TaskHit> = rows
+        .iter()
+        .filter(|r| r.task.status != "completed")
+        .filter(|r| {
+            crate::tasks::matches_query(r.task.summary.as_deref().unwrap_or(""), None, q)
+        })
+        .map(|r| task_json(r, now_ms, &tz))
+        .collect();
+    // Due date first, undated last, title as the tiebreak — the sidebar's own
+    // "By when" order, flattened.
+    tasks.sort_by(|a, b| {
+        (a.due_ms.is_none(), a.due_ms.unwrap_or(0), a.summary.as_str())
+            .cmp(&(b.due_ms.is_none(), b.due_ms.unwrap_or(0), b.summary.as_str()))
+    });
+
+    Ok(SearchResults { events, tasks })
 }
 
 #[tauri::command]
-pub async fn search_events(
+pub async fn search(
     state: tauri::State<'_, AppState>,
     query: String,
-) -> Result<Vec<Hit>, String> {
+) -> Result<SearchResults, String> {
     // The one clock read in this feature, and it is here rather than any
-    // deeper: `search` takes `now_ms` so it can be driven against a fixed
+    // deeper: `search_impl` takes `now_ms` so it can be driven against a fixed
     // one, exactly as `due_reminders` does.
-    search(&state.pool, &query, crate::now_ms())
+    search_impl(&state.pool, &query, crate::now_ms())
         .await
         .map_err(|e| crate::errors::user_facing(&e))
 }
@@ -173,16 +220,39 @@ mod tests {
         omacal_store::upsert_event(pool, e).await.unwrap();
     }
 
+    /// The matched **events** for `q` at the fixed clock. Tasks are read
+    /// through [`tasks`]: the two kinds are separate answers and the tests keep
+    /// them separate, which is the shape under test.
+    async fn events(pool: &SqlitePool, q: &str) -> Vec<Hit> {
+        search_impl(pool, q, NOW).await.unwrap().events
+    }
+
+    async fn tasks(pool: &SqlitePool, q: &str) -> Vec<TaskHit> {
+        search_impl(pool, q, NOW).await.unwrap().tasks
+    }
+
+    fn task(cal: i64, uid: &str, title: &str, status: &str, due_ms: Option<i64>) -> omacal_store::StoredTask {
+        omacal_store::StoredTask {
+            id: 0, calendar_id: cal, uid: uid.into(), etag: None, caldav_href: None,
+            summary: Some(title.into()), description: None, due_utc: due_ms,
+            due_tz: Some("UTC".into()), due_all_day: true, status: status.into(),
+            completed_utc: None, priority: 0, updated_at: 0, raw_ics: None,
+        }
+    }
+
+    async fn insert_task(pool: &SqlitePool, t: &omacal_store::StoredTask) {
+        omacal_store::upsert_task(pool, t).await.unwrap();
+    }
+
     #[tokio::test]
     async fn a_title_is_matched_case_insensitively_anywhere_in_it() {
         let pool = pool_with_two_calendars().await;
         insert(&pool, &row(1, "a", "Quarterly Board Review", NOW + DAY)).await;
 
         for q in ["board", "BOARD", "Board Review", "quarterly"] {
-            let hits = search(&pool, q, NOW).await.unwrap();
-            assert_eq!(hits.len(), 1, "query {q:?} should match");
+            assert_eq!(events(&pool, q).await.len(), 1, "query {q:?} should match");
         }
-        assert!(search(&pool, "budget", NOW).await.unwrap().is_empty());
+        assert!(events(&pool, "budget").await.is_empty());
     }
 
     /// §2: titles and nothing else. A word in the location must not pull an
@@ -194,7 +264,7 @@ mod tests {
         e.location = Some("Board room".into());
         insert(&pool, &e).await;
 
-        assert!(search(&pool, "board", NOW).await.unwrap().is_empty());
+        assert!(events(&pool, "board").await.is_empty());
     }
 
     /// **Spec §5, both halves in one query.** The absence alone would pass
@@ -206,7 +276,7 @@ mod tests {
         insert(&pool, &row(1, "shown-ev", "Team lunch", NOW + DAY)).await;
         insert(&pool, &row(2, "hidden-ev", "Team lunch", NOW + 2 * DAY)).await;
 
-        let hits = search(&pool, "team lunch", NOW).await.unwrap();
+        let hits = events(&pool, "team lunch").await;
 
         assert_eq!(hits.len(), 1, "the hidden calendar's copy must not appear");
         assert_eq!(hits[0].start_ms, NOW + DAY, "and the one that did is the shown one");
@@ -222,7 +292,7 @@ mod tests {
         insert(&pool, &row(1, "c", "Trip to Oslo", NOW + DAY)).await;
         insert(&pool, &row(1, "d", "Trip to Cairo", NOW - 400 * DAY)).await;
 
-        let hits = search(&pool, "trip to", NOW).await.unwrap();
+        let hits = events(&pool, "trip to").await;
 
         assert_eq!(
             hits.iter().map(|h| h.title.as_str()).collect::<Vec<_>>(),
@@ -246,7 +316,7 @@ mod tests {
         e.recurrence = Some("RRULE:FREQ=WEEKLY".into());
         insert(&pool, &e).await;
 
-        let hits = search(&pool, "standup", NOW).await.unwrap();
+        let hits = events(&pool, "standup").await;
 
         assert_eq!(hits.len(), 1, "a series is one result, not one per occurrence");
         assert_ne!(hits[0].start_ms, dtstart, "not the master's own start");
@@ -267,7 +337,7 @@ mod tests {
         e.recurrence = Some("RRULE:FREQ=WEEKLY;COUNT=4".into());
         insert(&pool, &e).await;
 
-        let hits = search(&pool, "retro", NOW).await.unwrap();
+        let hits = events(&pool, "retro").await;
 
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].start_ms, dtstart + 21 * DAY, "the last of the four, not the first");
@@ -291,7 +361,7 @@ mod tests {
 
         // `50% p` — a substring of the first title and, unescaped, a wildcard
         // match for the second as well ("50", anything, " p").
-        let hits = search(&pool, "50% p", NOW).await.unwrap();
+        let hits = events(&pool, "50% p").await;
 
         assert_eq!(hits.len(), 1, "an unescaped % would match the spelled-out one too");
         assert_eq!(hits[0].title, "50% progress");
@@ -303,19 +373,161 @@ mod tests {
         insert(&pool, &row(1, "a", "sync_now", NOW + DAY)).await;
         insert(&pool, &row(1, "b", "syncXnow", NOW + 2 * DAY)).await;
 
-        let hits = search(&pool, "sync_now", NOW).await.unwrap();
+        let hits = events(&pool, "sync_now").await;
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].title, "sync_now");
     }
 
     /// The overlay asks on every keystroke, including the one that empties the
-    /// field. `LIKE '%%'` would answer with the whole database.
+    /// field. `LIKE '%%'` would answer with the whole database, and an empty
+    /// query must not be "every open task" either.
     #[tokio::test]
     async fn an_empty_query_matches_nothing_rather_than_everything() {
         let pool = pool_with_two_calendars().await;
         insert(&pool, &row(1, "a", "Standup", NOW + DAY)).await;
+        insert_task(&pool, &task(1, "t1", "Call the bank", "needs-action", None)).await;
 
-        assert!(search(&pool, "", NOW).await.unwrap().is_empty());
-        assert!(search(&pool, "   ", NOW).await.unwrap().is_empty());
+        assert!(events(&pool, "").await.is_empty());
+        assert!(events(&pool, "   ").await.is_empty());
+        assert!(tasks(&pool, "").await.is_empty());
+        assert!(tasks(&pool, "   ").await.is_empty());
+    }
+
+    /// **A task is found by its title**, case-insensitively and
+    /// anywhere in it, the way an event is.
+    #[tokio::test]
+    async fn an_open_task_is_found_by_its_title() {
+        let pool = pool_with_two_calendars().await;
+        insert_task(&pool, &task(1, "t1", "Call the bank", "needs-action", None)).await;
+
+        for q in ["bank", "BANK", "call the", "the bank"] {
+            assert_eq!(tasks(&pool, q).await.len(), 1, "query {q:?} should match");
+        }
+        assert!(tasks(&pool, "garage").await.is_empty());
+    }
+
+    /// **A task's title folds case and accents**, the same `fold` the event
+    /// search applies: #153 routes task search through `matches_query`, so an
+    /// unaccented query finds an accented title, in either spelling.
+    #[tokio::test]
+    async fn an_open_tasks_title_folds_case_and_accents() {
+        let pool = pool_with_two_calendars().await;
+        insert_task(&pool, &task(1, "t1", "Garnituri ușă intrare", "needs-action", None)).await;
+
+        for q in ["usa", "ușă", "GARNITURI USA", "garnituri usa intrare"] {
+            assert_eq!(tasks(&pool, q).await.len(), 1, "query {q:?} should match");
+        }
+        assert!(tasks(&pool, "iesire").await.is_empty(), "folding is not fuzzing");
+    }
+
+    /// The task half of the title-only rule: a word in the **note** is not a
+    /// match, exactly as a word in an event's description is not.
+    #[tokio::test]
+    async fn a_match_in_a_tasks_note_is_not_a_match() {
+        let pool = pool_with_two_calendars().await;
+        let mut t = task(1, "t1", "Call the bank", "needs-action", None);
+        t.description = Some("about the landlord".into());
+        insert_task(&pool, &t).await;
+
+        assert_eq!(tasks(&pool, "bank").await.len(), 1);
+        assert!(tasks(&pool, "landlord").await.is_empty());
+    }
+
+    /// **Open only.** A completed task is not a search result, even one the
+    /// list still carries: a `completed_utc IS NULL` completion slips past
+    /// `tasks_for_ui`'s own cutoff, which is exactly the row the `status`
+    /// filter here has to catch.
+    #[tokio::test]
+    async fn a_completed_task_is_not_a_search_hit() {
+        let pool = pool_with_two_calendars().await;
+        insert_task(&pool, &task(1, "open", "Call the bank", "needs-action", None)).await;
+        insert_task(&pool, &task(1, "done", "Call the bank too", "completed", None)).await;
+
+        let hits = tasks(&pool, "bank").await;
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].summary, "Call the bank");
+    }
+
+    /// The list rule, for tasks as for events: a hit on a hidden list is one
+    /// the user cannot act on, so it is not a hit.
+    #[tokio::test]
+    async fn a_task_on_a_hidden_list_is_not_found_while_a_shown_lists_is() {
+        let pool = pool_with_two_calendars().await;
+        insert_task(&pool, &task(1, "shown", "Pack the van", "needs-action", None)).await;
+        insert_task(&pool, &task(2, "hidden", "Pack the van", "needs-action", None)).await;
+
+        let hits = tasks(&pool, "pack the van").await;
+        assert_eq!(hits.len(), 1, "the hidden list's copy must not appear");
+    }
+
+    /// Due date first (earliest first), undated last, title as the tiebreak —
+    /// **not priority**. The store's own order puts priority ahead of summary,
+    /// so a due tie between a high-priority "Zulu" and a low-priority "Delta"
+    /// comes back Zulu first; the search re-sorts to Delta first, and that is
+    /// the half this fixture exists to reach.
+    #[tokio::test]
+    async fn tasks_come_back_due_first_undated_last_and_ignore_priority_for_the_tie() {
+        let pool = pool_with_two_calendars().await;
+        insert_task(&pool, &task(1, "z", "Task Zebra", "needs-action", None)).await;
+        insert_task(&pool, &task(1, "a", "Task Alpha", "needs-action", None)).await;
+        insert_task(&pool, &task(1, "b", "Task Beta", "needs-action", None)).await;
+        insert_task(&pool, &task(1, "m", "Task Mango", "needs-action", Some(NOW + DAY))).await;
+        insert_task(&pool, &task(1, "p", "Task Apple", "needs-action", Some(NOW - DAY))).await;
+        // The same due date, and priority disagrees with the title rule.
+        let mut zulu = task(1, "z2", "Task Zulu", "needs-action", Some(NOW + 2 * DAY));
+        zulu.priority = 1;
+        let mut delta = task(1, "d", "Task Delta", "needs-action", Some(NOW + 2 * DAY));
+        delta.priority = 9;
+        insert_task(&pool, &zulu).await;
+        insert_task(&pool, &delta).await;
+
+        let hits = tasks(&pool, "task").await;
+        assert_eq!(
+            hits.iter().map(|t| t.summary.as_str()).collect::<Vec<_>>(),
+            vec![
+                "Task Apple", "Task Mango", "Task Delta", "Task Zulu",
+                "Task Alpha", "Task Beta", "Task Zebra",
+            ],
+            "earliest due first, undated last, ties by title rather than priority",
+        );
+    }
+
+    /// The shape itself: one query can answer with both kinds at once, and
+    /// each stays in its own array with its own ordering.
+    #[tokio::test]
+    async fn one_query_can_answer_with_an_event_and_a_task() {
+        let pool = pool_with_two_calendars().await;
+        insert(&pool, &row(1, "ev", "Board prep", NOW + DAY)).await;
+        insert_task(&pool, &task(1, "tk", "Board pack", "needs-action", None)).await;
+
+        let results = search_impl(&pool, "board", NOW).await.unwrap();
+        assert_eq!(results.events.len(), 1);
+        assert_eq!(results.tasks.len(), 1);
+        assert_eq!(results.events[0].title, "Board prep");
+        assert_eq!(results.tasks[0].summary, "Board pack");
+    }
+
+    /// **The wire shape**: two arrays under `events`/`tasks`, and a task row
+    /// that is `task_json`'s whole contract rather than a slimmer hit. The
+    /// `{ok, data}` envelope above it is `print_json`'s, shared by every
+    /// command and not search's to change — what search owns is what sits under
+    /// `data`, and that is what this pins.
+    #[tokio::test]
+    async fn the_wire_shape_is_two_arrays_and_a_task_row_is_the_whole_contract() {
+        let pool = pool_with_two_calendars().await;
+        insert(&pool, &row(1, "ev", "Board prep", NOW + DAY)).await;
+        insert_task(&pool, &task(1, "tk", "Board pack", "needs-action", Some(NOW))).await;
+
+        let results = search_impl(&pool, "board", NOW).await.unwrap();
+        let v = serde_json::to_value(&results).unwrap();
+
+        assert!(v["events"].is_array(), "events under its own key");
+        assert!(v["tasks"].is_array(), "tasks under its own key");
+        for key in [
+            "id", "summary", "notes", "due", "dueMs", "dueAllDay",
+            "overdue", "completed", "list", "listId", "canWrite",
+        ] {
+            assert!(v["tasks"][0].get(key).is_some(), "task row is missing {key}");
+        }
     }
 }

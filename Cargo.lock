@@ -3139,7 +3139,7 @@ dependencies = [
 
 [[package]]
 name = "omacal"
-version = "5.2.2"
+version = "5.3.0"
 dependencies = [
  "anyhow",
  "block2",
@@ -3207,6 +3207,7 @@ dependencies = [
  "rrule",
  "serde",
  "thiserror 2.0.20",
+ "unicode-normalization",
 ]
 
 [[package]]
@@ -3231,6 +3232,8 @@ name = "omacal-store"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "libsqlite3-sys",
+ "omacal-core",
  "serde",
  "serde_json",
  "sqlx",

@@ -163,6 +163,11 @@ async fn set_completed_impl(state: &AppState, id: i64, on: bool) -> anyhow::Resu
         .await?
         .ok_or_else(|| anyhow::anyhow!(TASK_GONE))?;
     let raw = task.raw_ics.as_deref().ok_or_else(|| anyhow::anyhow!("task has no resource"))?;
+    // Completing is refused, reopening is not: a series someone completed
+    // elsewhere is exactly what reopening it here restores.
+    if on && omacal_caldav::todo_repeats(raw, &task.uid) {
+        anyhow::bail!(TASK_REPEATS);
+    }
     let home = task_home(state, task.calendar_id).await?;
 
     let now = jiff::Timestamp::from_millisecond(crate::now_ms())?;
@@ -526,6 +531,13 @@ pub(crate) const TASK_ON_BOTH_LISTS: &str =
     "The task is now on the list you chose, but OmaCal could not take it off the \
      old one — it is on both. Delete the copy on the old list.";
 pub(crate) const TASK_GONE: &str = "that task is no longer here";
+/// A tick on a repeating task (#145). OmaCal can only complete the whole
+/// VTODO, and `STATUS:COMPLETED` on a series ends it for every client, so it
+/// refuses before writing and says where the tick can be made instead.
+pub(crate) const TASK_REPEATS: &str =
+    "This task repeats, and OmaCal cannot complete a single occurrence yet — \
+     completing it here would end the whole series, so nothing was changed. \
+     Tick it off in the app that made it.";
 /// `list_name`'s three refusals. Named so they can be allow-listed: each
 /// says what to do about a name the user just typed, and OPAQUE for a
 /// 61-character list name would report a sync fault for a typo.
@@ -683,12 +695,14 @@ pub struct DonePage {
 /// Whether a task matches what was typed into the Done list's search.
 ///
 /// Every word must appear, in the title or the note, in any order and any
-/// case — "bank call" finds "Call the bank". Case is folded by Rust, not by
-/// SQLite, whose `LOWER` knows ASCII only: a list kept in Bulgarian has to
-/// search like one kept in English. An empty query matches everything.
+/// case — "bank call" finds "Call the bank". Matching folds through
+/// [`omacal_core::fold`], the same fold the event search's `fold_ci` applies,
+/// so `usa` finds `ușă` here as it does there, and a list kept in Cyrillic or
+/// in Romanian searches like one kept in plain English. An empty query matches
+/// everything.
 pub(crate) fn matches_query(summary: &str, notes: Option<&str>, query: &str) -> bool {
-    let hay = format!("{}\n{}", summary, notes.unwrap_or("")).to_lowercase();
-    query.split_whitespace().all(|word| hay.contains(&word.to_lowercase()))
+    let hay = omacal_core::fold(&format!("{}\n{}", summary, notes.unwrap_or("")));
+    query.split_whitespace().all(|word| hay.contains(&omacal_core::fold(word)))
 }
 
 /// Completed tasks older than `before_ms`, newest first, filtered by `query`
@@ -974,6 +988,44 @@ mod tests {
         assert!(omacal_store::task_by_id(&pool, id).await.unwrap().is_none());
     }
 
+    /// #145: a tick on a repeating task would write `STATUS:COMPLETED` on the
+    /// series and end it for every client, so it is refused before anything
+    /// is written. Reopening one completed elsewhere is not refused — that
+    /// restores the series.
+    #[tokio::test]
+    async fn a_repeating_task_is_not_completed_but_can_be_reopened() {
+        let pool = omacal_store::connect_memory().await.unwrap();
+        let list =
+            omacal_store::ensure_local_task_list(&pool, "Tasks on this device", "Europe/Sofia", 0)
+                .await
+                .unwrap();
+        let state = local_state(pool.clone());
+        let raw = |status: &str| {
+            format!("BEGIN:VCALENDAR\r\nBEGIN:VTODO\r\nUID:weekly\r\nSUMMARY:Water the plants\r\n\
+                     DTSTART;VALUE=DATE:20261005\r\nDUE;VALUE=DATE:20261005\r\n\
+                     RRULE:FREQ=WEEKLY\r\nSTATUS:{status}\r\nEND:VTODO\r\nEND:VCALENDAR\r\n")
+        };
+        let stored = |status: &str| omacal_store::StoredTask {
+            id: 0, calendar_id: list, uid: "weekly".into(), etag: None, caldav_href: None,
+            summary: Some("Water the plants".into()), description: None, due_utc: Some(0),
+            due_tz: None, due_all_day: true, status: status.to_lowercase(), completed_utc: None,
+            priority: 0, updated_at: 0, raw_ics: Some(raw(status)),
+        };
+        let id = omacal_store::upsert_task(&pool, &stored("NEEDS-ACTION")).await.unwrap();
+
+        let refused = set_completed_impl(&state, id, true).await.unwrap_err();
+        assert_eq!(refused.to_string(), TASK_REPEATS);
+        let t = omacal_store::task_by_id(&pool, id).await.unwrap().unwrap();
+        assert_eq!(t.status, "needs-action", "nothing was marked");
+        assert_eq!(t.raw_ics.as_deref(), Some(raw("NEEDS-ACTION").as_str()), "nothing was rewritten");
+
+        let id = omacal_store::upsert_task(&pool, &stored("COMPLETED")).await.unwrap();
+        set_completed_impl(&state, id, false).await.unwrap();
+        let t = omacal_store::task_by_id(&pool, id).await.unwrap().unwrap();
+        assert_eq!(t.status, "needs-action", "a series completed elsewhere reopens");
+        assert!(t.raw_ics.as_deref().is_some_and(|r| r.contains("RRULE:FREQ=WEEKLY")));
+    }
+
     /// iCloud's shape: PUTs answered without an ETag. Each write reads the
     /// etag back and the next one is guarded by it; a row that still knows
     /// none replaces the resource rather than trying to create it again.
@@ -1011,8 +1063,8 @@ mod tests {
         assert_eq!(unguarded, 1);
     }
 
-    /// The Done list's search: every word, anywhere, any case — including
-    /// the cases SQLite's `LOWER` would miss.
+    /// The Done list's search: every word, anywhere, any case — and accents
+    /// folded away, the same fold the event search applies.
     #[test]
     fn done_search_matches_every_word_in_the_title_or_the_note_in_any_case() {
         assert!(matches_query("Call the bank", None, ""), "an empty search is everything");
@@ -1020,9 +1072,14 @@ mod tests {
         assert!(matches_query("Call the bank", None, "BANK call"), "any order, any case");
         assert!(matches_query("Pay rent", Some("to the landlord"), "rent landlord"), "the note counts");
         assert!(!matches_query("Call the bank", None, "bank rent"), "every word, not any word");
-        // Cyrillic: `LOWER('Обади')` in SQLite is still 'Обади'.
+        // Cyrillic: case folds, which SQLite's ASCII `LOWER` could not.
         assert!(matches_query("Обади се на банката", None, "БАНКАТА"));
+        // Accents fold in either spelling, and an unaccented query finds the
+        // accented title.
         assert!(matches_query("Élise's birthday", None, "élise"));
+        assert!(matches_query("Élise's birthday", None, "elise"));
+        assert!(matches_query("Garnituri ușă intrare", None, "garnituri usa intrare"));
+        assert!(!matches_query("Élise's birthday", None, "eliza"), "folding is not fuzzing");
     }
 
     /// Earlier done tasks come in pages, newest first, never repeating what

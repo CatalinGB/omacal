@@ -64,6 +64,7 @@
   import EventPopover from './lib/EventPopover.svelte';
   import EventForm from './lib/EventForm.svelte';
   import SearchOverlay from './lib/SearchOverlay.svelte';
+  import type { Pick } from './lib/search';
   import QuickEventModal from './lib/QuickEventModal.svelte';
   import DeleteConfirm from './lib/DeleteConfirm.svelte';
   import MoveConfirm from './lib/MoveConfirm.svelte';
@@ -367,6 +368,10 @@
    *  menu, closed from its own corner; the calendar keeps working either
    *  way, which is why this is a layout row and not a modal. */
   let tasksOpen = $state(false);
+  /** The task a search result landed on: the pane opens to it,
+   *  scrolled to and flashed. Cleared by the pane once it has handled it, so
+   *  choosing the same task twice re-lands rather than staying a no-op. */
+  let focusTaskId = $state<number | null>(null);
 
   /** The tasks the grid draws, whether or not the sidebar is open: a task
    *  due Thursday belongs on Thursday either way, and a row that appeared
@@ -1362,6 +1367,28 @@
     await openOccurrence(hit.eventId, hit.startMs, hit.endMs, keyboardAnchor());
   }
 
+  /** A search result, of whichever kind. An event moves the calendar and opens
+   *  its popover; a task has no date to move to, so it opens the Tasks pane and
+   *  lands on the row — the two read surfaces, chosen by the kind the overlay
+   *  handed up. */
+  function pickHit(pick: Pick) {
+    if (pick.kind === 'event') {
+      void goToHit(pick.hit);
+    } else {
+      goToTaskHit(pick.hit.id);
+    }
+  }
+
+  /** A task result: search closes, the pane opens, and the row is
+   *  scrolled to and flashed by `TasksSidebar`. Landing on the row *is* the
+   *  task's read surface, exactly as the popover is the event's — clicking the
+   *  row still opens the editor. */
+  function goToTaskHit(id: number) {
+    searchOpen = false;
+    tasksOpen = true;
+    focusTaskId = id;
+  }
+
   let gridSelId = $state<number | null>(null);
   let gridSelStart = $state<number | null>(null);
   // Carried for the same reason `WeekGrid`'s own `selectedEndMs` is: the event
@@ -2222,6 +2249,8 @@
   <div class="workspace">
     {#if tasksOpen}
       <TasksSidebar onclose={() => (tasksOpen = false)}
+                    focusTaskId={focusTaskId}
+                    onfocused={() => (focusTaskId = null)}
                     width={tasksWidth}
                     onresize={(px) => (tasksWidth = px)} />
     {/if}
@@ -2313,7 +2342,7 @@
 {/if}
 
 {#if searchOpen}
-  <SearchOverlay onclose={() => (searchOpen = false)} onpick={goToHit} />
+  <SearchOverlay onclose={() => (searchOpen = false)} onpick={pickHit} />
 {/if}
 
 {#if quickAdd}

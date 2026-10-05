@@ -11,3 +11,8 @@ serde.workspace = true
 serde_json.workspace = true
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "migrate"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros"] }
+# For the accent-fold scalar function: `sqlx` has no `create_function`, so the
+# pool registers one on the raw handle itself. Pinned to the version `sqlx`
+# 0.8.6 already links, so there is one copy of the library, not two.
+libsqlite3-sys = { version = "0.30.1", default-features = false }
+omacal-core = { version = "0.1.0", path = "../omacal-core" }

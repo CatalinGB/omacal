@@ -44,7 +44,8 @@ USAGE
   omacal events show ID [--json]           one event whole: guest list with
                                            each person's answer, join link,
                                            organizer, description
-  omacal search <query> [--json]           titles, nearest to today first
+  omacal search <query> [--json]           event and task titles, nearest
+                                           first (tasks by due date)
   omacal calendars [--json]                every calendar, with ids
   omacal tasks [--all] [--json]            what still needs doing, with ids
   omacal tasks lists [--json]              the lists a task can go on, with ids
@@ -179,7 +180,7 @@ pub(crate) fn command_catalog() -> Vec<CommandInfo> {
             description: "answer an invitation",
             flags: &["--scope", "--occurrence", "--json"] },
         CommandInfo { name: "search", usage: "search <query>", writes: false,
-            description: "titles, nearest to today first",
+            description: "event and task titles; events nearest first, tasks by due date",
             flags: &["--json"] },
         CommandInfo { name: "calendars", usage: "calendars", writes: false,
             description: "every calendar with ids and accounts",
@@ -723,22 +724,60 @@ fn print_rows_human(rows: &[Row]) {
 /// distinction the app stores, kept rather than flattened. `dueMs` is the
 /// window's own reading of it (`tasks::display_due_ms`), and `overdue` is the
 /// sidebar's: a task due today is due today all day, not late at 00:01.
-fn task_json(row: &omacal_store::TaskRow, now_ms: i64, tz: &jiff::tz::TimeZone) -> serde_json::Value {
+///
+/// **A named struct, not an inline `json!`**, only so search can return the
+/// same rows it does: `omacal search` finds tasks too, and a
+/// second hand-built object would be a second contract to keep in step. The
+/// keys below are the whole task-row contract — `omacal tasks --json` and a
+/// search's `data.tasks` are the same shape on purpose.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskHit {
+    pub id: i64,
+    pub summary: String,
+    pub notes: Option<String>,
+    /// A bare date (`2026-09-17`) or an RFC 3339 instant in the display zone.
+    pub due: Option<String>,
+    pub due_ms: Option<i64>,
+    pub due_all_day: bool,
+    pub overdue: bool,
+    pub completed: bool,
+    /// The task's RFC 5545 priority: 1 highest … 9 lowest, 0 for none.
+    pub priority: i64,
+    /// The list's name.
+    pub list: String,
+    pub list_id: i64,
+    pub can_write: bool,
+}
+
+pub(crate) fn task_json(row: &omacal_store::TaskRow, now_ms: i64, tz: &jiff::tz::TimeZone) -> TaskHit {
     let t = &row.task;
-    serde_json::json!({
-        "id": t.id,
-        "summary": t.summary.clone().unwrap_or_default(),
-        "notes": t.description,
-        "due": due_wire(t, tz),
-        "dueMs": crate::tasks::display_due_ms(t, tz),
-        "dueAllDay": t.due_all_day,
-        "overdue": task_overdue(t, now_ms, tz),
-        "completed": t.status == "completed",
-        "priority": t.priority,
-        "list": row.calendar_summary,
-        "listId": t.calendar_id,
-        "canWrite": row.access_role != "reader",
-    })
+    TaskHit {
+        id: t.id,
+        summary: t.summary.clone().unwrap_or_default(),
+        notes: t.description.clone(),
+        due: due_wire(t, tz),
+        due_ms: crate::tasks::display_due_ms(t, tz),
+        due_all_day: t.due_all_day,
+        overdue: task_overdue(t, now_ms, tz),
+        completed: t.status == "completed",
+        priority: t.priority,
+        list: row.calendar_summary.clone(),
+        list_id: t.calendar_id,
+        can_write: row.access_role != "reader",
+    }
+}
+
+/// The date a search hit's task line leads with, `!` when it is late. A task
+/// with no due date has no date to name, so the line says so rather than
+/// starting blank.
+fn task_when(t: &TaskHit) -> String {
+    let day = t
+        .due
+        .as_deref()
+        .map(|d| d.split('T').next().unwrap_or(d).to_string())
+        .unwrap_or_else(|| "no date".into());
+    if t.overdue { format!("{day} !") } else { day }
 }
 
 /// One task list, as an agent consumes it: the id `--list` takes, the name
@@ -1152,18 +1191,26 @@ pub(crate) fn run(inv: Invocation) -> i32 {
                     }
                 }
                 Command::Search { query } => {
-                    let hits = crate::search::search(&pool, query, crate::now_ms()).await?;
+                    let results = crate::search::search_impl(&pool, query, crate::now_ms()).await?;
                     if inv.json {
-                        print_json(&hits);
-                    } else if hits.is_empty() {
+                        print_json(&results);
+                    } else if results.events.is_empty() && results.tasks.is_empty() {
                         println!("No matches.");
                     } else {
                         let tz = jiff::tz::TimeZone::system();
-                        for h in &hits {
+                        for h in &results.events {
                             let when = jiff::Timestamp::from_millisecond(h.start_ms)
                                 .map(|t| t.to_zoned(tz.clone()).strftime("%Y-%m-%d %H:%M").to_string())
                                 .unwrap_or_default();
                             println!("{when}  {}  (event {})", h.title, h.event_id);
+                        }
+                        // A blank line only when both kinds are present: it
+                        // separates two sections, it does not decorate one.
+                        if !results.events.is_empty() && !results.tasks.is_empty() {
+                            println!();
+                        }
+                        for t in &results.tasks {
+                            println!("{}  {}  (task {} · {})", task_when(t), t.summary, t.id, t.list);
                         }
                     }
                     Ok(EXIT_OK)
@@ -1407,14 +1454,14 @@ mod tests {
         let row = stored_task(Some(at("2026-09-16T21:00:00Z")), "Europe/Sofia", true);
         let evening = at("2026-09-17T15:00:00Z");
         let j = task_json(&row, evening, &sofia);
-        assert_eq!(j["due"], "2026-09-17");
-        assert_eq!(j["overdue"], false, "due today is not late");
+        assert_eq!(j.due.as_deref(), Some("2026-09-17"));
+        assert!(!j.overdue, "due today is not late");
         let next_day = at("2026-09-17T21:30:00Z");
-        assert_eq!(task_json(&row, next_day, &sofia)["overdue"], true, "the day after, it is");
+        assert!(task_json(&row, next_day, &sofia).overdue, "the day after, it is");
         // A timed one is late the moment its hour passes.
         let timed = stored_task(Some(at("2026-09-17T07:00:00Z")), "Europe/Sofia", false);
-        assert_eq!(task_json(&timed, evening, &sofia)["overdue"], true);
-        assert_eq!(task_json(&timed, at("2026-09-17T06:00:00Z"), &sofia)["overdue"], false);
+        assert!(task_json(&timed, evening, &sofia).overdue);
+        assert!(!task_json(&timed, at("2026-09-17T06:00:00Z"), &sofia).overdue);
     }
 
     /// Dates in the zone they were written in, times in the display zone
@@ -1425,12 +1472,12 @@ mod tests {
         // A New York list's Thursday, read from Sofia: still Thursday.
         let ny = stored_task(Some(at("2026-09-17T04:00:00Z")), "America/New_York", true);
         let j = task_json(&ny, at("2026-09-16T09:00:00Z"), &sofia);
-        assert_eq!(j["due"], "2026-09-17");
-        assert_eq!(j["dueMs"], at("2026-09-16T21:00:00Z"), "Thursday's midnight where the reader is");
+        assert_eq!(j.due.as_deref(), Some("2026-09-17"));
+        assert_eq!(j.due_ms, Some(at("2026-09-16T21:00:00Z")), "Thursday's midnight where the reader is");
         // 01:30 in Sofia on the 18th is 22:30 UTC on the 17th.
         let late = stored_task(Some(at("2026-09-17T22:30:00Z")), "Europe/Sofia", false);
         let j = task_json(&late, at("2026-09-16T09:00:00Z"), &sofia);
-        assert_eq!(j["due"], "2026-09-18T01:30:00+03:00");
+        assert_eq!(j.due.as_deref(), Some("2026-09-18T01:30:00+03:00"));
         let lines = task_lines(&[&late], at("2026-09-16T09:00:00Z"), &sofia);
         assert!(lines[0].contains("2026-09-18"), "the line names the 18th: {}", lines[0]);
     }

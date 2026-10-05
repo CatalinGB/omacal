@@ -51,9 +51,14 @@ pub fn apply_early() {
 /// The first place the data actually is, or `None` — a source checkout run
 /// from `target/`, say, where the host's ICU is the one to trust anyway.
 pub fn find(exe_dir: Option<&Path>, appdir: Option<&Path>) -> Option<PathBuf> {
-    candidates(exe_dir, appdir)
-        .into_iter()
-        .find(|d| d.join(PROBE_FILE).is_file())
+    first_with_data(candidates(exe_dir, appdir))
+}
+
+/// The first of `dirs` holding the data. Apart from [`find`] so a test can
+/// leave out `/usr/lib/omacal/icu-tz`, which an installed .deb fills on the
+/// host and which would otherwise answer for the test's own empty directory.
+fn first_with_data(dirs: Vec<PathBuf>) -> Option<PathBuf> {
+    dirs.into_iter().find(|d| d.join(PROBE_FILE).is_file())
 }
 
 /// Where a Tauri bundle puts its resources on Linux, in the order Tauri's
@@ -114,7 +119,12 @@ mod tests {
         let lib = root.path().join("usr/lib/omacal/icu-tz");
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::create_dir_all(&lib).unwrap();
-        assert_eq!(find(Some(&bin), None), None, "an empty directory is not the data");
+        // Without the system path: on a host with the .deb installed it holds
+        // the real data, and the empty directory under test would never be
+        // the one asked about.
+        let inside_root: Vec<PathBuf> =
+            candidates(Some(&bin), None).into_iter().filter(|d| d.starts_with(root.path())).collect();
+        assert_eq!(first_with_data(inside_root), None, "an empty directory is not the data");
         std::fs::write(lib.join(PROBE_FILE), b"x").unwrap();
         assert_eq!(
             find(Some(&bin), None).map(|p| p.canonicalize().unwrap()),
