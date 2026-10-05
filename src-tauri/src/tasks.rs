@@ -163,6 +163,11 @@ async fn set_completed_impl(state: &AppState, id: i64, on: bool) -> anyhow::Resu
         .await?
         .ok_or_else(|| anyhow::anyhow!(TASK_GONE))?;
     let raw = task.raw_ics.as_deref().ok_or_else(|| anyhow::anyhow!("task has no resource"))?;
+    // Completing is refused, reopening is not: a series someone completed
+    // elsewhere is exactly what reopening it here restores.
+    if on && omacal_caldav::todo_repeats(raw, &task.uid) {
+        anyhow::bail!(TASK_REPEATS);
+    }
     let home = task_home(state, task.calendar_id).await?;
 
     let now = jiff::Timestamp::from_millisecond(crate::now_ms())?;
@@ -507,6 +512,13 @@ pub(crate) const TASK_ON_BOTH_LISTS: &str =
     "The task is now on the list you chose, but OmaCal could not take it off the \
      old one — it is on both. Delete the copy on the old list.";
 pub(crate) const TASK_GONE: &str = "that task is no longer here";
+/// A tick on a repeating task (#145). OmaCal can only complete the whole
+/// VTODO, and `STATUS:COMPLETED` on a series ends it for every client, so it
+/// refuses before writing and says where the tick can be made instead.
+pub(crate) const TASK_REPEATS: &str =
+    "This task repeats, and OmaCal cannot complete a single occurrence yet — \
+     completing it here would end the whole series, so nothing was changed. \
+     Tick it off in the app that made it.";
 /// `list_name`'s three refusals. Named so they can be allow-listed: each
 /// says what to do about a name the user just typed, and OPAQUE for a
 /// 61-character list name would report a sync fault for a typo.
@@ -950,6 +962,44 @@ mod tests {
 
         delete_impl(&state, id).await.unwrap();
         assert!(omacal_store::task_by_id(&pool, id).await.unwrap().is_none());
+    }
+
+    /// #145: a tick on a repeating task would write `STATUS:COMPLETED` on the
+    /// series and end it for every client, so it is refused before anything
+    /// is written. Reopening one completed elsewhere is not refused — that
+    /// restores the series.
+    #[tokio::test]
+    async fn a_repeating_task_is_not_completed_but_can_be_reopened() {
+        let pool = omacal_store::connect_memory().await.unwrap();
+        let list =
+            omacal_store::ensure_local_task_list(&pool, "Tasks on this device", "Europe/Sofia", 0)
+                .await
+                .unwrap();
+        let state = local_state(pool.clone());
+        let raw = |status: &str| {
+            format!("BEGIN:VCALENDAR\r\nBEGIN:VTODO\r\nUID:weekly\r\nSUMMARY:Water the plants\r\n\
+                     DTSTART;VALUE=DATE:20261005\r\nDUE;VALUE=DATE:20261005\r\n\
+                     RRULE:FREQ=WEEKLY\r\nSTATUS:{status}\r\nEND:VTODO\r\nEND:VCALENDAR\r\n")
+        };
+        let stored = |status: &str| omacal_store::StoredTask {
+            id: 0, calendar_id: list, uid: "weekly".into(), etag: None, caldav_href: None,
+            summary: Some("Water the plants".into()), description: None, due_utc: Some(0),
+            due_tz: None, due_all_day: true, status: status.to_lowercase(), completed_utc: None,
+            priority: 0, updated_at: 0, raw_ics: Some(raw(status)),
+        };
+        let id = omacal_store::upsert_task(&pool, &stored("NEEDS-ACTION")).await.unwrap();
+
+        let refused = set_completed_impl(&state, id, true).await.unwrap_err();
+        assert_eq!(refused.to_string(), TASK_REPEATS);
+        let t = omacal_store::task_by_id(&pool, id).await.unwrap().unwrap();
+        assert_eq!(t.status, "needs-action", "nothing was marked");
+        assert_eq!(t.raw_ics.as_deref(), Some(raw("NEEDS-ACTION").as_str()), "nothing was rewritten");
+
+        let id = omacal_store::upsert_task(&pool, &stored("COMPLETED")).await.unwrap();
+        set_completed_impl(&state, id, false).await.unwrap();
+        let t = omacal_store::task_by_id(&pool, id).await.unwrap().unwrap();
+        assert_eq!(t.status, "needs-action", "a series completed elsewhere reopens");
+        assert!(t.raw_ics.as_deref().is_some_and(|r| r.contains("RRULE:FREQ=WEEKLY")));
     }
 
     /// iCloud's shape: PUTs answered without an ETag. Each write reads the

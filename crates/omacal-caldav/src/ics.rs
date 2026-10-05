@@ -960,6 +960,22 @@ fn alarm_at_due_lines() -> [String; 5] {
     ]
 }
 
+/// Whether the task with this UID repeats: its series carries an `RRULE` or
+/// an `RDATE` (#145).
+///
+/// OmaCal has no notion of one occurrence of a task, so [`patch_todo_status`]
+/// can only complete the whole VTODO — and `STATUS:COMPLETED` on a series
+/// master ends the series for every client that reads it. Callers ask this
+/// first and refuse rather than write that.
+pub fn todo_repeats(raw: &str, uid: &str) -> bool {
+    let Some(cal) = parse(raw) else { return false };
+    let repeats = cal
+        .components("VTODO")
+        .filter(|t| t.prop_value("UID").map(str::trim) == Some(uid))
+        .any(|t| t.props.iter().any(|p| matches!(p.name.as_str(), "RRULE" | "RDATE")));
+    repeats
+}
+
 /// How long before its due a task's own alarm asks to speak, in minutes
 /// (#137), or `None` for a task that carries none.
 ///
@@ -2674,6 +2690,27 @@ END:VEVENT\r\nEND:VCALENDAR";
         let (rid_ms, _, _) =
             resolve(cloned.recurrence_id.as_ref().unwrap(), "UTC").unwrap();
         assert_eq!(ms, rid_ms, "the clone's DTSTART is the occurrence it overrides");
+    }
+
+    /// #145: a task repeats when its own VTODO carries the series machinery,
+    /// and only its own — another task's rule in the same resource is not
+    /// this one's, and a VALARM's lines are not the task's.
+    #[test]
+    fn a_task_repeats_only_by_its_own_rule() {
+        let todo = |uid: &str, extra: &str| {
+            format!("BEGIN:VTODO\r\nUID:{uid}\r\nSUMMARY:Water the plants\r\n\
+                     DUE;VALUE=DATE:20261005\r\n{extra}END:VTODO\r\n")
+        };
+        let cal = |body: &str| format!("BEGIN:VCALENDAR\r\n{body}END:VCALENDAR\r\n");
+
+        assert!(todo_repeats(&cal(&todo("t-1", "RRULE:FREQ=WEEKLY\r\n")), "t-1"));
+        assert!(todo_repeats(&cal(&todo("t-1", "RDATE;VALUE=DATE:20261012\r\n")), "t-1"));
+        assert!(!todo_repeats(&cal(&todo("t-1", "")), "t-1"), "a one-off");
+        assert!(
+            !todo_repeats(&cal(&(todo("t-1", "") + &todo("t-2", "RRULE:FREQ=DAILY\r\n"))), "t-1"),
+            "a neighbour's rule is not this task's"
+        );
+        assert!(!todo_repeats("not a calendar", "t-1"), "an unreadable resource is not a series");
     }
 
     /// #137: the desktop speaks when the task's own alarm does. A reminder
