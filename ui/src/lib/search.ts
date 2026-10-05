@@ -31,6 +31,8 @@ export type TaskHit = {
   dueAllDay: boolean;
   overdue: boolean;
   completed: boolean;
+  /** RFC 5545 priority: `1` highest … `9` lowest, `0` for none (#152). */
+  priority: number;
   list: string;
   listId: number;
   canWrite: boolean;
