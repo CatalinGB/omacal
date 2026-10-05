@@ -89,7 +89,7 @@ export type Harness = {
    *  while another's detail is still loading), the after-paint refresh
    *  (control when it lands), and closing a popover while its own RSVP is
    *  still in flight (control when *that* lands). */
-  /** Parks the next `search_events` call. What it is for is the race a
+  /** Parks the next `search` call. What it is for is the race a
    *  search-as-you-type overlay has: a response to an *earlier* query arriving
    *  after a later one and overwriting it. Holding the first and letting the
    *  second answer immediately is the only way to produce that ordering
@@ -859,7 +859,7 @@ function saveSettings(s: StubSettings): StubSettings {
 
 /** Installs the stub. Call before mounting anything that talks to Tauri. */
 /**
- * What `search_events` answers from, filtered by the query.
+ * What `search` answers from, filtered by the query.
  *
  * Both sides of the app's frozen clock (`APP_NOW`, Mon 29 Jan 2024) on
  * purpose: with everything in the future, nearest-first and soonest-first are
@@ -1051,18 +1051,32 @@ export function installTauriStub(scenario: string): Harness {
       // assert on titles it seeded, and the *query* is honoured here rather
       // than in the app — a stub that answered the same list for every query
       // could not tell a superseded response from a current one.
-      case 'search_events': {
+      case 'search': {
         const q = String(args.query ?? '').trim().toLowerCase();
-        const hits = q === ''
+        const events = q === ''
           ? []
           : SEARCHABLE.filter((h) => h.title.toLowerCase().includes(q));
+        // Open tasks only, title only — the backend's own rules, so an overlay
+        // spec drives the real contract and not a looser stub.
+        const tasks = q === ''
+          ? []
+          : taskRows
+              .filter((t) => !t.completed && t.summary.toLowerCase().includes(q))
+              .map((t) => ({
+                id: t.id, summary: t.summary, notes: t.notes,
+                due: t.dueMs === null ? null : new Date(t.dueMs).toISOString(),
+                dueMs: t.dueMs, dueAllDay: t.dueAllDay,
+                overdue: false, completed: t.completed,
+                list: t.calendar, listId: t.calendarId, canWrite: t.canWrite,
+              }));
+        const results = { events, tasks };
         if (holdSearchOnce) {
           holdSearchOnce = false;
           return new Promise((resolve) => {
-            parkedSearch.push({ query: q, resolve: () => resolve(hits) });
+            parkedSearch.push({ query: q, resolve: () => resolve(results) });
           });
         }
-        return hits;
+        return results;
       }
       case 'get_settings': {
         // `__holdSettings` as well as the harness flag, because the one read
