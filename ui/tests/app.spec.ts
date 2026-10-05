@@ -5506,6 +5506,23 @@ test.describe('App: hiding weekends', () => {
     await page.getByRole('button', { name: 'Previous day' }).click(); // would be Sunday
     await expect(col).toHaveAttribute('data-start-ms', String(APP_MON + 4 * day)); // back to Friday
   });
+
+  /** Hiding weekends is about not walking through one, never about refusing
+   *  a day reached on purpose. `WeekGrid` used to remap any weekend anchor
+   *  to the Monday after it regardless of how Day view got there — so Today
+   *  on a Saturday silently showed Monday instead. */
+  test('Day view opens on today even when today falls on a weekend', async ({ page }) => {
+    const day = 24 * 3_600_000;
+    const saturday = APP_MON + 5 * day + 12 * 3_600_000; // noon, Sat 3 Feb 2024
+    await page.clock.setFixedTime(saturday);
+    await openApp(page);
+    await setHideWeekends(page, true);
+    await page.keyboard.press('1'); // Day view
+
+    await expect(page.locator('[data-testid="week-body"] .col'))
+      .toHaveAttribute('data-start-ms', String(APP_MON + 5 * day)); // the Saturday itself
+  });
+
 });
 
 test.describe('App: zooming the hours', () => {

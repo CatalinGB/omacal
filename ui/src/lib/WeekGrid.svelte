@@ -152,18 +152,27 @@
     onresponded?: () => void;
   } = $props();
 
+  // Day view shows the single day `App` asked for, whichever weekday that
+  // is — hiding weekends is about not walking through one, never about
+  // refusing a day reached on purpose (a search hit, a reminder, a Month
+  // click, Today on a Saturday). So neither derivation below runs for it:
+  // `visibleDays` is the one signal `App` always hands down for this, 1 and
+  // only 1 for Day view.
+  const isDayView = $derived(visibleDays === 1);
+
   // `week` with Saturday and Sunday columns dropped, when the setting asks
   // for it. Every derivation below reads this instead of `week` itself, so
   // the drag/resize/keyboard-nav arithmetic they do by column index keeps
   // working against a contiguous array — it is just a shorter one.
-  const filteredWeek = $derived(hideWeekends() ? filterWeekends(week) : week);
+  const filteredWeek = $derived(hideWeekends() && !isDayView ? filterWeekends(week) : week);
   // The anchor `App` handed down, moved off a weekend onto the weekday after
   // it — `week` itself, not `filteredWeek`, so the walk can see the very
   // days that were dropped. A fixed Saturday week-start, or a window whose
   // math otherwise lands the anchor there, would else ask `visibleIndex` for
   // a day this payload no longer has at all.
   const effectiveVisibleStartMs = $derived(
-    hideWeekends() && visibleStartMs != null ? skipWeekendStart(week.days, visibleStartMs) : visibleStartMs
+    hideWeekends() && !isDayView && visibleStartMs != null
+      ? skipWeekendStart(week.days, visibleStartMs) : visibleStartMs
   );
 
   // The calendar window `App` actually asked for — `visibleDays` real days
@@ -189,7 +198,10 @@
   // the stretch from today happens to cross.
   const visible = $derived.by(() => {
     if (vis < 0) return filteredWeek.days.length;
-    if (!hideWeekends()) return rawVisible;
+    // Day view always draws exactly the one day it was asked for — counting
+    // only its weekdays would draw nothing at all for one that falls on a
+    // Saturday or Sunday on purpose.
+    if (!hideWeekends() || isDayView) return rawVisible;
     return week.days.slice(rawVisStart, rawVisStart + rawVisible).filter((d) => {
       const day = new Date(d.start_ms).getDay();
       return day !== 0 && day !== 6;

@@ -117,6 +117,32 @@ export function skipWeekendStart(days: { start_ms: number }[], ms: number): numb
   return ms;
 }
 
+/**
+ * `ms` moved one real calendar day in `dir`, carried straight through a
+ * Saturday or Sunday when `skipWeekends` is on — the one definition of a
+ * day "step", shared by the ‹/› buttons, a swipe and the keyboard's day
+ * cursor, so none of them can fall out of step with the others.
+ */
+export function stepDay(ms: number, dir: 1 | -1, skipWeekends: boolean): number {
+  const d = new Date(ms);
+  d.setDate(d.getDate() + dir);
+  while (skipWeekends && (d.getDay() === 0 || d.getDay() === 6)) d.setDate(d.getDate() + dir);
+  return d.getTime();
+}
+
+/**
+ * `ms` moved `days` real calendar days, one `stepDay` at a time rather than
+ * a single `setDate(+days)` — so a swipe that crosses a weekend skips it the
+ * same way a single step would, instead of landing on it because the whole
+ * distance was covered in one jump.
+ */
+export function stepDays(ms: number, days: number, skipWeekends: boolean): number {
+  const dir = days < 0 ? -1 : 1;
+  let out = ms;
+  for (let i = 0; i < Math.abs(days); i++) out = stepDay(out, dir, skipWeekends);
+  return out;
+}
+
 /** How many rows of chips the band shows before folding the rest behind
  *  "+N more". Four, which is what the backend used to pack (2026-08-31:
  *  "four is where a glance stops being a glance"); the difference is that

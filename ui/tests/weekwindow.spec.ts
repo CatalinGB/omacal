@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import type { WeekPayload } from '../src/lib/api';
 import {
   FLING_MIN_V, FLING_TAU_MS, filterWeekends, packBandLanes, padFor, panCommit, settleTarget, skipWeekendStart,
-  sliceWeek, springAt, springPlan, velocityOf, visibleIndex, windowHeld,
+  sliceWeek, springAt, springPlan, stepDay, stepDays, velocityOf, visibleIndex, windowHeld,
 } from '../src/lib/weekwindow';
 
 const DAY = 86_400_000;
@@ -309,5 +309,30 @@ test.describe('hiding weekends', () => {
   test('a weekend anchor with no weekday left in the payload is unchanged', () => {
     const friSat = tenDays.slice(4, 6); // Fri 25, Sat 26
     expect(skipWeekendStart(friSat, local(26))).toBe(local(26));
+  });
+
+  test('a single step carries straight through the weekend it would land on', () => {
+    expect(stepDay(local(25), 1, true)).toBe(local(28)); // Friday -> Monday
+    expect(stepDay(local(28), -1, true)).toBe(local(25)); // Monday -> Friday
+  });
+
+  test('a step off the weekend is a plain calendar day either way', () => {
+    expect(stepDay(local(22), 1, true)).toBe(local(23)); // Tue -> Wed
+    expect(stepDay(local(22), 1, false)).toBe(local(23)); // unaffected by the flag
+  });
+
+  test('with weekends not hidden, a step lands on them like any other day', () => {
+    expect(stepDay(local(25), 1, false)).toBe(local(26)); // Friday -> Saturday
+  });
+
+  test('a multi-day shift skips the weekend as it crosses, not just at the end', () => {
+    // Thursday + 3, skipping weekends: Fri, [Sat, Sun skipped], Mon — three
+    // weekday steps, not three calendar days.
+    expect(stepDays(local(24), 3, true)).toBe(local(29));
+    expect(stepDays(local(29), -3, true)).toBe(local(24));
+  });
+
+  test('a multi-day shift with weekends shown is a plain calendar jump', () => {
+    expect(stepDays(local(24), 3, false)).toBe(local(27));
   });
 });

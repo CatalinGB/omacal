@@ -47,7 +47,7 @@
   import { setSetting, getSettings, type AppSettings, type WeekViewDays } from './lib/settings';
   import { TASKS_WIDTH_DEFAULT } from './lib/taskwidth';
   import { HOUR_PX_DEFAULT, hourPxStepped } from './lib/zoom';
-  import { padFor, sliceWeek, visibleIndex, windowHeld } from './lib/weekwindow';
+  import { padFor, sliceWeek, stepDay, stepDays, visibleIndex, windowHeld } from './lib/weekwindow';
   import { setClockFormat } from './lib/clock.svelte';
   import { setSecondZone } from './lib/secondzone.svelte';
   import { setTaskSort } from './lib/tasksort.svelte';
@@ -154,7 +154,10 @@
    *  preserve — the day itself moves; anywhere else the offset absorbs it. */
   function panView(days: number) {
     if (view === 'day') {
-      anchorMs = shiftKeyboardDay(anchorMs, days);
+      // `stepDays`, not `shiftKeyboardDay`: a swipe across a weekend skips
+      // it the same way the ‹/› buttons do, rather than taking three
+      // gestures to move past two days nothing draws.
+      anchorMs = stepDays(anchorMs, days, hideWeekends());
       return;
     }
     weekPanDays += days;
@@ -677,7 +680,7 @@
     keyboardActive = true;
     const moved = moveDay(keyboardDays, keyboardCursor, dir);
     if (moved.overflow) {
-      loadKeyboardDay(shiftKeyboardDay(keyboardCursor.dayStartMs, dir), null);
+      loadKeyboardDay(stepDay(keyboardCursor.dayStartMs, dir, hideWeekends()), null);
       return;
     }
     pendingKeyboardDay = null;
@@ -698,7 +701,7 @@
       // including empty ones. Continue after that edge, not merely after the
       // selected event's day, or an empty tail would fetch the same week again.
       const edge = keyboardDays[dir === 1 ? keyboardDays.length - 1 : 0];
-      loadKeyboardDay(shiftKeyboardDay(edge?.startMs ?? keyboardCursor.dayStartMs, dir), dir);
+      loadKeyboardDay(stepDay(edge?.startMs ?? keyboardCursor.dayStartMs, dir, hideWeekends()), dir);
       return;
     }
     pendingKeyboardDay = null;
@@ -1264,14 +1267,14 @@
       bigYearNum = Math.min(Math.max(bigYearNum + dir, currentYear), currentYear + 1);
       return;
     }
-    const d = new Date(anchorMs);
+    // Day view steps through `stepDay`, the one definition of a day "step"
+    // shared with the swipe and the keyboard's day cursor — see its own doc.
     if (view === 'day') {
-      d.setDate(d.getDate() + dir);
-      // Weekends are off the grid entirely, so a step onto one carries
-      // straight through it rather than landing on a day nothing shows.
-      while (hideWeekends() && (d.getDay() === 0 || d.getDay() === 6)) d.setDate(d.getDate() + dir);
+      anchorMs = stepDay(anchorMs, dir, hideWeekends());
+      return;
     }
-    else if (view === 'week') {
+    const d = new Date(anchorMs);
+    if (view === 'week') {
       d.setDate(d.getDate() + dir * (weekStartsToday ? weekViewDays : 7));
     }
     else if (view === 'month') {
