@@ -11,3 +11,4 @@ jiff = "0.2.35"
 rrule = "0.14.0"
 serde.workspace = true
 thiserror.workspace = true
+unicode-normalization = "0.1.25"

@@ -1,5 +1,7 @@
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use libsqlite3_sys as ffi;
+use sqlx::sqlite::{SqliteConnectOptions, SqliteConnection, SqlitePoolOptions};
 use sqlx::SqlitePool;
+use std::os::raw::{c_char, c_int};
 use std::str::FromStr;
 
 pub mod calendars;
@@ -39,6 +41,92 @@ pub use events::{
     KnownGuest, KnownLocation, Reminder, Reminders, StoredEvent,
 };
 
+/// The SQL name of the accent fold: `fold_ci(text)`.
+const FOLD_CI: &[u8] = b"fold_ci\0";
+
+/// Register `fold_ci` on one connection.
+///
+/// **Per connection, so every one gets it.** A SQLite scalar function lives on
+/// the connection that registered it and the pool opens several; `sqlx` has no
+/// `create_function`, so this drops to the raw handle — the same door `sqlx`
+/// itself uses for its `regexp`. `SQLITE_DETERMINISTIC` says the same input
+/// always folds the same way.
+async fn register_fold_ci(conn: &mut SqliteConnection) -> Result<(), sqlx::Error> {
+    // FFI on the raw handle is only sound while the connection's background
+    // thread is parked, which is exactly what `lock_handle` buys.
+    let mut handle = conn.lock_handle().await?;
+    let code = unsafe {
+        ffi::sqlite3_create_function_v2(
+            handle.as_raw_handle().as_ptr(),
+            FOLD_CI.as_ptr().cast(),
+            1,
+            ffi::SQLITE_UTF8 | ffi::SQLITE_DETERMINISTIC,
+            std::ptr::null_mut(),
+            Some(fold_ci_sql),
+            None,
+            None,
+            None,
+        )
+    };
+    // A registration that failed silently would surface later as "no such
+    // function: fold_ci" on a search, far from the cause; say so at open.
+    if code != ffi::SQLITE_OK {
+        return Err(sqlx::Error::Protocol(format!(
+            "sqlite3_create_function_v2(fold_ci) failed with code {code}"
+        )));
+    }
+    Ok(())
+}
+
+/// The `fold_ci` callback: hand the one argument to [`omacal_core::fold`].
+unsafe extern "C" fn fold_ci_sql(
+    ctx: *mut ffi::sqlite3_context,
+    argc: c_int,
+    argv: *mut *mut ffi::sqlite3_value,
+) {
+    if argc != 1 {
+        ffi::sqlite3_result_error_code(ctx, ffi::SQLITE_CONSTRAINT_FUNCTION);
+        return;
+    }
+    let arg = *argv;
+    let text = ffi::sqlite3_value_text(arg);
+    if text.is_null() {
+        // A NULL summary folds to NULL, so a row's `IS NOT NULL` guard still
+        // means what it says.
+        ffi::sqlite3_result_null(ctx);
+        return;
+    }
+    let len = ffi::sqlite3_value_bytes(arg) as usize;
+    let bytes = std::slice::from_raw_parts(text, len);
+    match std::str::from_utf8(bytes) {
+        Ok(s) => {
+            let folded = omacal_core::fold(s);
+            // `SQLITE_TRANSIENT`: SQLite copies before this call returns, and
+            // `folded` is dropped with it.
+            ffi::sqlite3_result_text(
+                ctx,
+                folded.as_ptr() as *const c_char,
+                folded.len() as c_int,
+                ffi::SQLITE_TRANSIENT(),
+            );
+        }
+        Err(_) => ffi::sqlite3_result_error_code(ctx, ffi::SQLITE_ERROR),
+    }
+}
+
+/// The pool every door below opens through, so `fold_ci` is present on all of
+/// them. A database opened by the app, by the CLI read-only, or by a test is
+/// the same database to the search; a fold missing from one of them would make
+/// the same query answer differently there.
+fn pool_with_fold() -> SqlitePoolOptions {
+    SqlitePoolOptions::new().after_connect(|conn, _meta| {
+        Box::pin(async move {
+            register_fold_ci(conn).await?;
+            Ok(())
+        })
+    })
+}
+
 /// Opens an existing database read-only: no create, no migrations, no
 /// permission sweep — nothing about the file changes because it was read.
 /// The CLI's door (`src-tauri/src/cli.rs`): it must be able to answer
@@ -48,7 +136,7 @@ pub async fn connect_readonly(url: &str) -> anyhow::Result<SqlitePool> {
     let opts = SqliteConnectOptions::from_str(url)?
         .read_only(true)
         .foreign_keys(true);
-    Ok(SqlitePoolOptions::new().max_connections(1).connect_with(opts).await?)
+    Ok(pool_with_fold().max_connections(1).connect_with(opts).await?)
 }
 
 /// Opens (creating if needed) the database at `url` and runs migrations.
@@ -58,7 +146,7 @@ pub async fn connect(url: &str) -> anyhow::Result<SqlitePool> {
         .foreign_keys(true)
         // WAL keeps the UI's reads from blocking the sync task's writes.
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
-    let pool = SqlitePoolOptions::new().max_connections(5).connect_with(opts).await?;
+    let pool = pool_with_fold().max_connections(5).connect_with(opts).await?;
     // Between connect and migrate, deliberately: the file exists now, and
     // SQLite creates `-wal`/`-shm` with the main file's permissions — so a
     // database tightened *before* the first write bears sidecars that are
@@ -106,7 +194,7 @@ fn db_file_of(url: &str) -> Option<&str> {
 /// each new connection to `:memory:` would otherwise get its own empty database.
 pub async fn connect_memory() -> anyhow::Result<SqlitePool> {
     let opts = SqliteConnectOptions::from_str("sqlite::memory:")?.foreign_keys(true);
-    let pool = SqlitePoolOptions::new().max_connections(1).connect_with(opts).await?;
+    let pool = pool_with_fold().max_connections(1).connect_with(opts).await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
     Ok(pool)
 }

@@ -406,6 +406,20 @@ mod tests {
         assert!(tasks(&pool, "garage").await.is_empty());
     }
 
+    /// **A task's title folds case and accents**, the same `fold` the event
+    /// search applies: #153 routes task search through `matches_query`, so an
+    /// unaccented query finds an accented title, in either spelling.
+    #[tokio::test]
+    async fn an_open_tasks_title_folds_case_and_accents() {
+        let pool = pool_with_two_calendars().await;
+        insert_task(&pool, &task(1, "t1", "Garnituri ușă intrare", "needs-action", None)).await;
+
+        for q in ["usa", "ușă", "GARNITURI USA", "garnituri usa intrare"] {
+            assert_eq!(tasks(&pool, q).await.len(), 1, "query {q:?} should match");
+        }
+        assert!(tasks(&pool, "iesire").await.is_empty(), "folding is not fuzzing");
+    }
+
     /// The task half of the title-only rule: a word in the **note** is not a
     /// match, exactly as a word in an event's description is not.
     #[tokio::test]

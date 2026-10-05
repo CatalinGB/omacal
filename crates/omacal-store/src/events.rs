@@ -528,6 +528,14 @@ pub async fn exceptions_from(
 /// A user typing a percent sign means a percent sign; there is no query
 /// language here (§2) and this is what keeps that true.
 ///
+/// **Case and accents are folded** — the query and the column both through
+/// [`omacal_core::fold`], the column via the `fold_ci` SQL function — so
+/// `usa intrare` finds `ușă intrare` and `BOARD` finds `Board`. See
+/// [`omacal_core::fold`] for what is deliberately left alone (Turkish `ı`,
+/// `ß`, `ł`, `ø`). The pool must come from [`crate::connect`],
+/// [`crate::connect_readonly`] or [`crate::connect_memory`], which register
+/// `fold_ci`; a pool built some other way would answer `no such function`.
+///
 /// Recurring masters are returned as the single row they are. Resolving which
 /// *occurrence* to show is [`omacal_core::search`]'s, against a clock the
 /// caller supplies.
@@ -620,10 +628,15 @@ pub async fn known_locations(pool: &SqlitePool) -> anyhow::Result<Vec<KnownLocat
 }
 
 pub async fn search_events(pool: &SqlitePool, query: &str) -> anyhow::Result<Vec<StoredEvent>> {
+    // Fold the query exactly as `fold_ci` folds the column, so `usa` finds
+    // `ușă`, and lowercase is not a separate concern. The wildcards are escaped
+    // *after* folding: `fold` leaves `%`, `_` and `\` alone, so the two
+    // operations do not interact.
+    //
     // `\` as the escape character, applied to the two wildcards and to itself
     // — escaping `%` and `_` while leaving a literal backslash unescaped would
     // make `\%` mean "escaped percent" when the user typed two characters.
-    let escaped = query
+    let escaped = omacal_core::fold(query)
         .replace('\\', "\\\\")
         .replace('%', "\\%")
         .replace('_', "\\_");
@@ -636,7 +649,7 @@ pub async fn search_events(pool: &SqlitePool, query: &str) -> anyhow::Result<Vec
          WHERE c.selected = 1
            AND (e.status != 'cancelled' OR e.recurring_event_id IS NOT NULL)
            AND e.summary IS NOT NULL
-           AND LOWER(e.summary) LIKE LOWER(?1) ESCAPE '\\'"
+           AND fold_ci(e.summary) LIKE ?1 ESCAPE '\\'"
     );
 
     let rows = sqlx::query(&sql).bind(pattern).fetch_all(pool).await?;
@@ -743,6 +756,30 @@ mod tests {
             attendees: Vec::new(),
             reminders: Reminders::default(), calendar_default_reminders: Vec::new(),
         }
+    }
+
+    /// **Case and accents are folded on both sides** — the column through
+    /// `fold_ci`, the query through `omacal_core::fold` — so an unaccented
+    /// query finds an accented title and the title is still found by its own
+    /// spelling. `connect_memory` registers the function exactly as the app's
+    /// pool and the CLI's read-only pool do, which is what makes this the same
+    /// answer those two would give.
+    #[tokio::test]
+    async fn search_folds_case_and_accents_on_both_sides() {
+        let pool = connect_memory().await.unwrap();
+        let cal = seed(&pool).await;
+        let mut e = ev(cal, "accents", 0, 3_600_000);
+        e.summary = Some("Garnituri ușă intrare".into());
+        upsert_event(&pool, &e).await.unwrap();
+
+        for q in ["usa", "USA intrare", "ușă", "garnituri usa"] {
+            let hits = search_events(&pool, q).await.unwrap();
+            assert_eq!(hits.len(), 1, "query {q:?} should find the accented title");
+        }
+        assert!(search_events(&pool, "garage").await.unwrap().is_empty());
+        // The percent sign is still a character, not a wildcard, now that the
+        // query is folded before it is escaped.
+        assert!(search_events(&pool, "%").await.unwrap().is_empty());
     }
 
     fn att(email: &str, name: Option<&str>) -> Attendee {
