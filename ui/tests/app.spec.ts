@@ -799,7 +799,72 @@ test.describe('App', () => {
     await page.getByRole('button', { name: 'Previous month' }).click();
     await page.keyboard.press('1');
     await expect(page.locator('.col'))
-      .toHaveAttribute('data-start-ms', String(Date.UTC(2024, 0, 29))); // back to 29 Jan
+       .toHaveAttribute('data-start-ms', String(Date.UTC(2024, 0, 29))); // back to 29 Jan
+  });
+
+  // Month/Year period paging (spec 2026-10-06). A wheel notch is a page; the
+  // momentum tail is not a second one; and the same guard that mutes the
+  // keyboard mutes the wheel.
+  test.describe('the wheel pages Month and Year, one period at a time', () => {
+    test('a notch pages the Month view forward, and its tail does not', async ({ page }) => {
+      await page.goto(app('connected'));
+      await expect(page.locator('.vswitch button')).toHaveCount(5);
+      await page.keyboard.press('3'); // Month view, anchored Mon 29 Jan 2024
+      await expect(page.locator('h1')).toHaveText('January 2024');
+
+      const view = page.locator('.view');
+      await view.dispatchEvent('wheel', { deltaY: 120, cancelable: true });
+      await expect(page.locator('h1')).toHaveText('February 2024');
+
+      // The tail: an immediate second notch belongs to the same gesture and is
+      // swallowed by the lock, so the month does not run away.
+      await view.dispatchEvent('wheel', { deltaY: 120, cancelable: true });
+      await expect(page.locator('h1')).toHaveText('February 2024');
+
+      // A deliberate flick after the lock is a new gesture, and pages once.
+      await page.waitForTimeout(400);
+      await view.dispatchEvent('wheel', { deltaY: 120, cancelable: true });
+      await expect(page.locator('h1')).toHaveText('March 2024');
+    });
+
+    test('a notch pages the Year view forward by a year', async ({ page }) => {
+      await page.goto(app('connected'));
+      await expect(page.locator('.vswitch button')).toHaveCount(5);
+      await page.keyboard.press('4'); // Year view, seeded from the anchor
+      await expect(page.locator('h1')).toHaveText('2024');
+      await page.locator('.view').dispatchEvent('wheel', { deltaY: 120, cancelable: true });
+      await expect(page.locator('h1')).toHaveText('2025');
+    });
+
+    test('a wheel does not page while the search overlay is open', async ({ page }) => {
+      await page.goto(app('connected'));
+      await expect(page.locator('.vswitch button')).toHaveCount(5);
+      await page.keyboard.press('3');
+      await expect(page.locator('h1')).toHaveText('January 2024');
+      await page.keyboard.press('/');
+      await expect(page.getByRole('dialog', { name: 'Search' })).toBeVisible();
+      await page.locator('.view').dispatchEvent('wheel', { deltaY: 120, cancelable: true });
+      await expect(page.locator('h1')).toHaveText('January 2024');
+    });
+
+    test('a wheel does not page in Week view', async ({ page }) => {
+      await page.goto(app('connected'));
+      await expect(page.locator('.vswitch button')).toHaveCount(5);
+      await page.keyboard.press('2'); // Week — its own pan handler, not the pager
+      await expect(page.locator('h1')).toHaveText('January 2024');
+      await page.locator('.view').dispatchEvent('wheel', { deltaY: 120, cancelable: true });
+      await expect(page.locator('h1')).toHaveText('January 2024');
+    });
+
+    test('reduced motion still pages exactly one period', async ({ page }) => {
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await page.goto(app('connected'));
+      await expect(page.locator('.vswitch button')).toHaveCount(5);
+      await page.keyboard.press('3');
+      await expect(page.locator('h1')).toHaveText('January 2024');
+      await page.locator('.view').dispatchEvent('wheel', { deltaY: 120, cancelable: true });
+      await expect(page.locator('h1')).toHaveText('February 2024');
+    });
   });
 
   test('H and L step by the current view\'s unit', async ({ page }) => {
