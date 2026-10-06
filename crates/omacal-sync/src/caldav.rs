@@ -334,11 +334,25 @@ pub async fn sync_caldav_calendar(
     if supports_tasks {
         let resources = client.todos(collection_url).await?;
         let mut keep: Vec<String> = Vec::new();
+        let mut skipped = 0usize;
         for res in &resources {
+            // Skipped, and said so — the event branch's rule. Silently, a task
+            // missing from the pane could not be told apart from one the
+            // server never sent (#145).
             let Some(root) = omacal_caldav::parse(&res.ics) else {
+                tracing::warn!(url = %res.url, "unparseable task resource; skipping");
+                skipped += 1;
                 continue;
             };
-            for todo in omacal_caldav::todos_in(&root) {
+            let todos = omacal_caldav::todos_in(&root);
+            // `todos_in` drops a VTODO without a UID, since nothing could
+            // address it again. Counted for the same reason.
+            let without_uid = root.components("VTODO").count() - todos.len();
+            if without_uid > 0 {
+                tracing::warn!(url = %res.url, count = without_uid, "task without a UID; skipping");
+                skipped += without_uid;
+            }
+            for todo in todos {
                 let row = caldav_todo_to_stored(
                     &todo,
                     calendar_id,
@@ -353,8 +367,22 @@ pub async fn sync_caldav_calendar(
                 outcome.upserted += 1;
             }
         }
-        outcome.deleted +=
-            omacal_store::delete_tasks_not_in(pool, calendar_id, &keep).await? as usize;
+        let deleted = omacal_store::delete_tasks_not_in(pool, calendar_id, &keep).await? as usize;
+        outcome.deleted += deleted;
+        outcome.skipped += skipped;
+        // One line per list actually fetched, which the ctag check above
+        // limits to when the server says something changed. It is what tells
+        // "the server sent nothing" from "OmaCal dropped it" when a task is
+        // missing. Ids and counts only: the log is what a user pastes into an
+        // issue, and a list's name or address is theirs.
+        tracing::info!(
+            calendar_id,
+            resources = resources.len(),
+            tasks = keep.len(),
+            skipped,
+            deleted,
+            "task list fetched"
+        );
 
         // A tasks-only collection still needs its ctag recorded — the event
         // branch above did it for mixed collections.
@@ -484,5 +512,63 @@ mod tests {
         let s = caldav_to_stored(&ev, 1, "Europe/Sofia", None, "").unwrap();
         assert!(s.is_all_day);
         assert_eq!(s.end_utc - s.start_utc, DAY_MS);
+    }
+
+    /// #145: what a task list's server sends and OmaCal cannot store is
+    /// counted, not dropped without a word. One good VTODO, one resource that
+    /// is not iCalendar, one VTODO with no UID: one stored, two skipped.
+    #[tokio::test]
+    async fn a_task_resource_that_cannot_be_read_is_counted_not_silently_dropped() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let ok = "BEGIN:VCALENDAR\r\nBEGIN:VTODO\r\nUID:t-1\r\nSUMMARY:Call the bank\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
+        let no_uid = "BEGIN:VCALENDAR\r\nBEGIN:VTODO\r\nSUMMARY:Nobody can address me\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
+        let response = |href: &str, data: &str| {
+            format!(
+                "<d:response><d:href>{href}</d:href><d:propstat><d:prop><d:getetag>\"1\"</d:getetag>\
+                 <c:calendar-data>{data}</c:calendar-data></d:prop>\
+                 <d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>"
+            )
+        };
+        let multistatus = |body: String| {
+            format!(r#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/">{body}</d:multistatus>"#)
+        };
+        Mock::given(method("PROPFIND"))
+            .respond_with(ResponseTemplate::new(207).set_body_string(multistatus(
+                "<d:response><d:href>/tasks/</d:href><d:propstat><d:prop><cs:getctag>c1</cs:getctag></d:prop>\
+                 <d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>".into(),
+            )))
+            .mount(&server)
+            .await;
+        Mock::given(method("REPORT"))
+            .respond_with(ResponseTemplate::new(207).set_body_string(multistatus(
+                response("/tasks/a.ics", ok)
+                    + &response("/tasks/b.ics", "this is not a calendar")
+                    + &response("/tasks/c.ics", no_uid),
+            )))
+            .mount(&server)
+            .await;
+
+        let pool = omacal_store::connect_memory().await.unwrap();
+        sqlx::query("INSERT INTO accounts (google_sub, email, created_at) VALUES ('s','e@x',0)")
+            .execute(&pool).await.unwrap();
+        let list = format!("{}/tasks/", server.uri());
+        sqlx::query(
+            "INSERT INTO calendars (account_id, google_id, summary, timezone, access_role,
+                                    supports_events, supports_tasks)
+             VALUES (1, ?1, 'Chores', 'UTC', 'owner', 0, 1)",
+        )
+        .bind(&list)
+        .execute(&pool).await.unwrap();
+
+        let client = omacal_caldav::CalDavClient::new(&server.uri(), "u", "p").unwrap();
+        let out = sync_caldav_calendar(&pool, &client, 1, &list, false, true, 0, 0, 0).await.unwrap();
+
+        assert_eq!(out.upserted, 1, "the readable task is stored");
+        assert_eq!(out.skipped, 2, "the unreadable resource and the UID-less task are counted");
+        let rows = omacal_store::tasks_for_ui(&pool, 0).await.unwrap();
+        assert_eq!(rows.iter().map(|r| r.task.uid.as_str()).collect::<Vec<_>>(), vec!["t-1"]);
     }
 }

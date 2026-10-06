@@ -15,6 +15,10 @@ pub struct SyncOutcome {
     pub upserted: usize,
     pub deleted: usize,
     pub did_full_resync: bool,
+    /// What the server sent that could not be stored: a resource that would
+    /// not parse, or a component with nothing to address it by. Each is also
+    /// logged as a warning where it is skipped.
+    pub skipped: usize,
 }
 
 /// Formats an epoch-millisecond instant as RFC 3339, for Google's `timeMin`/
