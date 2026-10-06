@@ -615,7 +615,10 @@
   {/if}
   <div class="top">
     <h2>Tasks</h2>
-    <div class="flex"></div>
+    <!-- The two view switches travel together: beside the title when the
+         pane is wide enough, on their own line below it when it is not, and
+         never with a label broken over two lines. -->
+    <div class="views">
     <!-- One control, one job: it regroups the rows below and changes
          nothing else on the screen. -->
     <div class="seg" role="group" aria-label="Group tasks">
@@ -631,6 +634,7 @@
               onclick={() => chooseSort('date')}>Date</button>
       <button class:on={taskSort() === 'priority'} aria-pressed={taskSort() === 'priority'}
               onclick={() => chooseSort('priority')}>Priority</button>
+    </div>
     </div>
     <button class="close" aria-label="Close tasks" onclick={onclose}>×</button>
   </div>
@@ -697,7 +701,7 @@
             <button type="button" class="lact on" onclick={() => void saveListName()} disabled={listBusy}>Save</button>
             <button type="button" class="lact" onclick={() => (naming = null)}>Cancel</button>
           {:else}
-            <span class="hlabel" class:warn={g.warn}>{g.label}</span>
+            <span class="hlabel" class:warn={g.warn} title={g.label}>{g.label}</span>
             <span class="count">{g.rows.length}</span>
             {#if g.list?.local}
               <!-- Only a list on this device is this pane's to rename or
@@ -936,7 +940,8 @@
 
 <style>
   .side { position: relative; display: flex; flex-direction: column; flex-grow: 0; flex-shrink: 0;
-          min-height: 0; border-right: 1px solid var(--hairline); font-size: 12px; }
+          min-height: 0; border-right: 1px solid var(--hairline); font-size: 12px;
+          container: tasks / inline-size; }
   /* Over the border rather than beside it: a 1px hairline is not something
      a hand can catch, and a strip that took layout width would move the
      panel's contents every time the pointer approached. */
@@ -948,7 +953,17 @@
     content: ''; position: absolute; top: 0; bottom: 0; left: 3px; width: 1px;
     background: var(--accent); }
   .resize:focus-visible { outline: none; }
-  .top { display: flex; align-items: center; gap: 8px; padding: 12px 10px 10px 14px; }
+  /* Title and close on the first line, the view switches on the second,
+     until the pane is wide enough to hold all of it on one (below). */
+  .top { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "title close" "views views";
+         align-items: center; gap: 8px; padding: 12px 10px 10px 14px; }
+  .top h2 { grid-area: title; }
+  .top .close { grid-area: close; }
+  .views { grid-area: views; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; }
+  @container tasks (min-width: 380px) {
+    .top { grid-template-columns: auto 1fr auto; grid-template-areas: "title views close"; }
+    .views { justify-content: flex-end; }
+  }
   .empty-do { padding: 0 14px 14px; }
   .make { font: inherit; font-size: 12px; cursor: pointer; color: var(--text);
           background: color-mix(in srgb, var(--text) 6%, transparent);
@@ -956,12 +971,11 @@
   .make:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 10%, transparent); }
   .make:disabled { opacity: 0.6; cursor: default; }
   h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
-  .flex { flex-grow: 1; }
   .seg { display: flex; gap: 2px; background: color-mix(in srgb, var(--text) 4%, transparent);
          border-radius: 7px; padding: 2px; }
   .seg button { appearance: none; -webkit-appearance: none; font: inherit; border: 0;
                 background: none; color: var(--muted); padding: 3px 9px; border-radius: 5px;
-                cursor: pointer; }
+                cursor: pointer; white-space: nowrap; }
   .seg button.on { background: color-mix(in srgb, var(--text) 8%, transparent);
                    color: var(--text); font-weight: 500; }
   .close { appearance: none; -webkit-appearance: none; font: inherit; font-size: 15px;
@@ -976,9 +990,13 @@
              background: var(--surface); color: var(--text); padding: 0; }
   .newlist:hover { background: color-mix(in srgb, var(--text) 8%, var(--surface)); }
   /* A list's heading carries its own two actions, quiet until pointed at or
-     reached by the keyboard, so a pane of lists reads as a pane of lists. */
-  .lacts { margin-left: auto; display: inline-flex; gap: 2px; opacity: 0; }
-  .listhead:hover .lacts, .listhead:focus-within .lacts { opacity: 1; }
+     reached by the keyboard, so a pane of lists reads as a pane of lists.
+     Quiet means no width as well as no ink: invisible buttons that still took
+     their room squeezed the list's name onto two lines. Still focusable at
+     zero width, so Tab reaches them and `:focus-within` opens them. */
+  .lacts { margin-left: auto; display: inline-flex; gap: 2px; opacity: 0; max-width: 0;
+           overflow: hidden; flex-shrink: 0; }
+  .listhead:hover .lacts, .listhead:focus-within .lacts { opacity: 1; max-width: none; }
   .lact { appearance: none; -webkit-appearance: none; font: inherit; font-size: 10.5px;
           color: var(--muted); background: none; border: 0; border-radius: 4px; cursor: pointer;
           padding: 2px 5px; }
@@ -996,10 +1014,13 @@
 
   .rows { flex-grow: 1; overflow-y: auto; padding: 0 8px 12px; }
   .head { display: flex; align-items: center; gap: 7px; padding: 10px 6px 5px; }
+  /* One line, always: a name too long for the row ends in an ellipsis, and
+     the whole of it is in the tooltip. */
   .hlabel { font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
-            color: var(--text); font-weight: 600; }
+            color: var(--text); font-weight: 600;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .hlabel.warn { color: var(--error); }
-  .count { font-size: 10.5px; color: var(--muted); }
+  .count { font-size: 10.5px; color: var(--muted); flex-shrink: 0; }
 
   .row { display: flex; align-items: center; gap: 9px; padding: 6px; border-radius: 6px; }
   /* A search result's row, flashed once so the eye finds it in the list; it

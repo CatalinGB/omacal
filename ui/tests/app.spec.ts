@@ -6830,6 +6830,7 @@ test.describe('task lists on this device', () => {
   test('a list on this device can be renamed', async ({ page }) => {
     const side = await openTasks(page);
     await side.getByRole('button', { name: 'By list' }).click();
+    await heading(side, 'Personal').hover(); // its actions take no room until then
     await side.getByRole('button', { name: 'Rename Personal' }).click();
     const field = side.getByRole('textbox', { name: 'List name' });
     await expect(field).toHaveValue('Personal');
@@ -6844,12 +6845,14 @@ test.describe('task lists on this device', () => {
   test('deleting a list asks first, and takes its tasks with it', async ({ page }) => {
     const side = await openTasks(page);
     await side.getByRole('button', { name: 'By list' }).click();
+    await heading(side, 'Personal').hover();
     await side.getByRole('button', { name: 'Delete Personal' }).click();
     await expect(side.getByText('Delete “Personal” and all its tasks, done ones too?')).toBeVisible();
     await side.getByRole('button', { name: 'Keep' }).click();
     await expect(heading(side, 'Personal')).toBeVisible();
     expect(await lastCall(page, 'delete_task_list')).toBeUndefined();
 
+    await heading(side, 'Personal').hover();
     await side.getByRole('button', { name: 'Delete Personal' }).click();
     await side.getByRole('button', { name: 'Delete list' }).click();
     await expect.poll(() => lastCall(page, 'delete_task_list')).toEqual({ id: 1 });
@@ -6868,6 +6871,7 @@ test.describe('task lists on this device', () => {
   test('Escape leaves a name unsaved and the pane open', async ({ page }) => {
     const side = await openTasks(page);
     await side.getByRole('button', { name: 'By list' }).click();
+    await heading(side, 'Personal').hover();
     await side.getByRole('button', { name: 'Rename Personal' }).click();
     await side.getByRole('textbox', { name: 'List name' }).fill('Nope');
     await page.keyboard.press('Escape');
@@ -6875,6 +6879,64 @@ test.describe('task lists on this device', () => {
     await expect(heading(side, 'Personal')).toBeVisible();
     await expect(side).toBeVisible();
     expect(await lastCall(page, 'rename_task_list')).toBeUndefined();
+  });
+
+  /** How many lines `el`'s text is drawn on: one line box, one rect. */
+  const lineCount = (el: import('@playwright/test').Locator) => el.evaluate((node) => {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    return range.getClientRects().length;
+  });
+
+  /** Plamen, 2026-10-06: once 5.4.0 added Date / Priority beside By when /
+   *  By list, every label broke over two lines at the pane's default width.
+   *  Now the switches take their own line under the title when the pane is
+   *  narrow, join it when it is wide, and a label never wraps. */
+  for (const [width, oneRow] of [[220, false], [288, false], [560, true]] as const) {
+    test(`the header's switches keep each label on one line at ${width}px`, async ({ page }) => {
+      await page.addInitScript(([k, v]) => sessionStorage.setItem(k, v),
+        ['omacal-stub-settings', JSON.stringify({ tasksWidth: width })] as const);
+      const side = await openTasks(page);
+      for (const name of ['By when', 'By list', 'Date', 'Priority']) {
+        expect(await lineCount(side.getByRole('button', { name, exact: true })), name).toBe(1);
+      }
+      const top = async (q: string) => (await side.locator(q).boundingBox())!.y;
+      expect(Math.abs((await top('.top h2')) - (await top('.top .close'))), 'title and close share a line').toBeLessThan(4);
+      const sameLine = Math.abs((await top('.views')) - (await top('.top .close'))) < 8;
+      expect(sameLine, oneRow ? 'the switches join the title' : 'the switches take their own line').toBe(oneRow);
+    });
+  }
+
+  /** The same day's second screenshot: "TASKS ON THIS DEVICE" on two lines
+   *  with room to spare. The local list's Rename and Delete were invisible
+   *  but still took their width; now they take none until pointed at. */
+  test('a list\'s name keeps one line, and its hidden actions take no room', async ({ page }) => {
+    const side = await openTasks(page);
+    await side.getByRole('button', { name: 'By list' }).click();
+    await heading(side, 'Personal').hover();
+    await side.getByRole('button', { name: 'Rename Personal' }).click();
+    await side.getByRole('textbox', { name: 'List name' }).fill('Tasks on this device');
+    await side.getByRole('textbox', { name: 'List name' }).press('Enter');
+    const label = heading(side, 'Tasks on this device').locator('.hlabel');
+    await expect(label).toBeVisible();
+    await page.mouse.move(1, 1); // off the heading: its actions fold away
+
+    expect(await lineCount(label)).toBe(1);
+    expect(await label.evaluate((el) => el.scrollWidth <= el.clientWidth), 'the whole name shows').toBe(true);
+  });
+
+  /** Folded is not unreachable: the actions are still in the tab order, and
+   *  focus opens them as hovering does. */
+  test('a list\'s folded actions open when the keyboard reaches them', async ({ page }) => {
+    const side = await openTasks(page);
+    await side.getByRole('button', { name: 'By list' }).click();
+    await page.mouse.move(1, 1);
+    const rename = side.getByRole('button', { name: 'Rename Personal' });
+    await rename.focus();
+    await expect(rename).toBeFocused();
+    expect((await rename.boundingBox())!.width, 'drawn at its own width once focused').toBeGreaterThan(20);
+    await page.keyboard.press('Enter');
+    await expect(side.getByRole('textbox', { name: 'List name' })).toHaveValue('Personal');
   });
 });
 
