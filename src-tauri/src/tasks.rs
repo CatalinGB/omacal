@@ -1026,6 +1026,56 @@ mod tests {
         assert!(t.raw_ics.as_deref().is_some_and(|r| r.contains("RRULE:FREQ=WEEKLY")));
     }
 
+    /// #145, with the reporter's own mailbox.org (Open-Xchange) export. OX
+    /// completes an occurrence by saving a completed copy under a **new** UID
+    /// and moving the series' own DTSTART/DUE on to the next occurrence. So
+    /// the live series is an ordinary VTODO with an RRULE: it syncs and shows
+    /// in the pane like any task, due on its next date, and a tick on it is
+    /// refused rather than ending the series.
+    #[tokio::test]
+    async fn an_open_xchange_repeating_task_shows_and_its_tick_is_refused() {
+        const ACTIVE: &str = "BEGIN:VCALENDAR\r\nPRODID:Open-Xchange\r\nVERSION:2.0\r\n\
+            CALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nBEGIN:VTODO\r\nDTSTAMP:20261005T171632Z\r\n\
+            SUMMARY:Sync-Omalliorlio\r\nDTSTART;VALUE=DATE:20261005\r\nDUE;VALUE=DATE:20261006\r\n\
+            CLASS:PUBLIC\r\nRRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=MO,TH\r\nSTATUS:NEEDS-ACTION\r\n\
+            PERCENT-COMPLETE:0\r\nUID:bb6281ae-fbef-4487-984b-e9d44f3f3327\r\n\
+            CREATED:20260926T180034Z\r\nLAST-MODIFIED:20261005T171549Z\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
+        const DONE_COPY: &str = "BEGIN:VCALENDAR\r\nPRODID:Open-Xchange\r\nVERSION:2.0\r\n\
+            CALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nBEGIN:VTODO\r\nDTSTAMP:20261005T171930Z\r\n\
+            SUMMARY:Sync-Omalliorlio\r\nDTSTART;VALUE=DATE:20261001\r\nDUE;VALUE=DATE:20261002\r\n\
+            CLASS:PUBLIC\r\nCOMPLETED:20261005T171549Z\r\nRRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=MO,TH\r\n\
+            STATUS:COMPLETED\r\nPERCENT-COMPLETE:100\r\nUID:9154af77-80c0-4fc0-885c-fa8047e388bf\r\n\
+            CREATED:20260926T180034Z\r\nLAST-MODIFIED:20261005T171549Z\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
+
+        let pool = omacal_store::connect_memory().await.unwrap();
+        let list = omacal_store::ensure_local_task_list(&pool, "Tasks", "Europe/Berlin", 0).await.unwrap();
+        let state = local_state(pool.clone());
+        // Before either resource's COMPLETED, so the done copy is still in
+        // the pane's recent window.
+        let now_ms: i64 = "2026-10-05T12:00:00Z".parse::<jiff::Timestamp>().unwrap().as_millisecond();
+        for (href, raw) in [("a.ics", ACTIVE), ("b.ics", DONE_COPY)] {
+            let root = omacal_caldav::parse(raw).unwrap();
+            let todos = omacal_caldav::todos_in(&root);
+            assert_eq!(todos.len(), 1, "{href}: one VTODO, read and not dropped");
+            let row = omacal_sync::caldav::caldav_todo_to_stored(
+                &todos[0], list, "Europe/Berlin", href, None, raw, now_ms,
+            );
+            omacal_store::upsert_task(&pool, &row).await.unwrap();
+        }
+
+        let rows = omacal_store::tasks_for_ui(&pool, 0).await.unwrap();
+        let active = rows.iter().find(|r| r.task.uid.starts_with("bb6281ae")).expect("the series shows").task.clone();
+        assert_eq!(active.status, "needs-action");
+        assert!(active.due_all_day);
+        assert_eq!(active.due_utc, Some("2026-10-05T22:00:00Z".parse::<jiff::Timestamp>().unwrap().as_millisecond()),
+            "due on its next date, 6 October, midnight in Berlin");
+        assert!(rows.iter().any(|r| r.task.uid.starts_with("9154af77") && r.task.status == "completed"),
+            "the completed copy is its own task");
+
+        let refused = set_completed_impl(&state, active.id, true).await.unwrap_err();
+        assert_eq!(refused.to_string(), TASK_REPEATS);
+    }
+
     /// iCloud's shape: PUTs answered without an ETag. Each write reads the
     /// etag back and the next one is guarded by it; a row that still knows
     /// none replaces the resource rather than trying to create it again.
