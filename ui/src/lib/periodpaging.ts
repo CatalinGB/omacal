@@ -91,8 +91,8 @@ export function attachPeriodPaging(host: HTMLElement, cb: PagingCallbacks): () =
     if (!swipe || e.pointerId !== swipe.id) return;
     const { travel, samples } = swipe;
     swipe = null;
-    if (swipePage(travel, samples) === 1) { suppressNextClick(); cb.onPage(1); }
-    else if (swipePage(travel, samples) === -1) { suppressNextClick(); cb.onPage(-1); }
+    const page = swipePage(travel, samples);
+    if (page !== 0) { suppressNextClick(); cb.onPage(page); }
   }
   function onCancel(e: PointerEvent) { if (swipe && e.pointerId === swipe.id) swipe = null; }
 
