@@ -2,6 +2,7 @@
 <script lang="ts">
   import { pendingResponse } from './responses.svelte';
   import { visibleHours } from "./visiblehours.svelte";
+  import { hideWeekends } from './hideweekends.svelte';
   import { clockFormat } from './clock.svelte';
   import { gutterWidth, secondZone } from './secondzone.svelte';
   import { NOW_VIEWPORT_FRACTION } from './filmstrip';
@@ -19,8 +20,8 @@
   import { onPinch, type Pinch } from './pinch';
   import {
     BAND_ROWS, FLING_MIN_V, PAGE_FLICK_PX_PER_MS, STRONG_SWIPE_MIN_PX, STRONG_SWIPE_PX_PER_MS, TOUCH_LIFT_WHEEL_MS,
-    packBandLanes, panCommit,
-    settleTarget, sliceWeek, springAt, springPlan, velocityOf, visibleIndex, type PanSample,
+    filterWeekends, packBandLanes, panCommit,
+    settleTarget, skipWeekendStart, sliceWeek, springAt, springPlan, velocityOf, visibleIndex, type PanSample,
   } from './weekwindow';
   import type { DayColumn, Lane, Placed, WeekPayload, UiEvent } from './api';
   import type { Calendar } from './calendars';
@@ -151,14 +152,61 @@
     onresponded?: () => void;
   } = $props();
 
+  // Day view shows the single day `App` asked for, whichever weekday that
+  // is — hiding weekends is about not walking through one, never about
+  // refusing a day reached on purpose (a search hit, a reminder, a Month
+  // click, Today on a Saturday). So neither derivation below runs for it:
+  // `visibleDays` is the one signal `App` always hands down for this, 1 and
+  // only 1 for Day view.
+  const isDayView = $derived(visibleDays === 1);
+
+  // `week` with Saturday and Sunday columns dropped, when the setting asks
+  // for it. Every derivation below reads this instead of `week` itself, so
+  // the drag/resize/keyboard-nav arithmetic they do by column index keeps
+  // working against a contiguous array — it is just a shorter one.
+  const filteredWeek = $derived(hideWeekends() && !isDayView ? filterWeekends(week) : week);
+  // The anchor `App` handed down, moved off a weekend onto the weekday after
+  // it — `week` itself, not `filteredWeek`, so the walk can see the very
+  // days that were dropped. A fixed Saturday week-start, or a window whose
+  // math otherwise lands the anchor there, would else ask `visibleIndex` for
+  // a day this payload no longer has at all.
+  const effectiveVisibleStartMs = $derived(
+    hideWeekends() && !isDayView && visibleStartMs != null
+      ? skipWeekendStart(week.days, visibleStartMs) : visibleStartMs
+  );
+
+  // The calendar window `App` actually asked for — `visibleDays` real days
+  // starting at the (possibly skipped-forward) anchor — read off `week`,
+  // never `filteredWeek`: hiding weekends changes which of these days draw
+  // a column, never how many calendar days the window spans. A fixed week
+  // is still seven days long; two of them just stop being Saturday and
+  // Sunday's business to draw.
+  const rawVis = $derived(visibleIndex(week.days, effectiveVisibleStartMs ?? week.days[0]?.start_ms ?? 0));
+  const rawVisStart = $derived(Math.max(rawVis, 0));
+  const rawVisible = $derived(rawVis < 0 ? week.days.length : (visibleDays ?? week.days.length));
+
   // The window: how many days are on screen, where they start in the
   // payload, and the payload as if only they had been fetched. Everything
   // about *what is on screen* — today, the ruler's reference day, the
   // opening scroll — reads `visibleWeek`; only the track below ever draws
   // the padding.
-  const vis = $derived(visibleIndex(week.days, visibleStartMs ?? week.days[0]?.start_ms ?? 0));
+  const vis = $derived(visibleIndex(filteredWeek.days, effectiveVisibleStartMs ?? filteredWeek.days[0]?.start_ms ?? 0));
   // A payload without the window — see `visibleIndex` — is shown whole.
-  const visible = $derived(vis < 0 ? week.days.length : (visibleDays ?? week.days.length));
+  // Otherwise: `rawVisible` calendar days unless weekends are hidden, in
+  // which case only however many of them are not Saturday or Sunday — a
+  // fixed week always loses exactly two; a rolling one loses however many
+  // the stretch from today happens to cross.
+  const visible = $derived.by(() => {
+    if (vis < 0) return filteredWeek.days.length;
+    // Day view always draws exactly the one day it was asked for — counting
+    // only its weekdays would draw nothing at all for one that falls on a
+    // Saturday or Sunday on purpose.
+    if (!hideWeekends() || isDayView) return rawVisible;
+    return week.days.slice(rawVisStart, rawVisStart + rawVisible).filter((d) => {
+      const day = new Date(d.start_ms).getDay();
+      return day !== 0 && day !== 6;
+    }).length;
+  });
   const visStart = $derived(Math.max(vis, 0));
   /** Whether the band shows every row or folds the rest behind "+N more".
    *  Sticky across navigation on purpose: a week with nothing hidden draws
@@ -166,7 +214,7 @@
    *  closing it on every step would fight the user who opened it. */
   let bandExpanded = $state(false);
   const bandRows = $derived(bandExpanded ? Infinity : BAND_ROWS);
-  const visibleWeek = $derived(sliceWeek(week, visStart, visible, bandRows));
+  const visibleWeek = $derived(sliceWeek(filteredWeek, visStart, visible, bandRows));
 
   // Every hour, not every second one: a rule at 10:00 with nothing at 11:00
   // makes a meeting's edge unplaceable by eye.
@@ -660,7 +708,7 @@
   // Give chips a response style and both this and `payloadResponse` have to
   // grow an all-day arm together.
   const effectiveDays = $derived(
-    week.days.map((d) => ({
+    filteredWeek.days.map((d) => ({
       ...d,
       events: d.events.map((e) => {
         const response = pendingResponse(e.id, e.start_ms)
@@ -693,7 +741,7 @@
   let panHidden = $state<number[]>([]);
   $effect.pre(() => {
     const active = panActive;
-    const lanes = week.all_day;
+    const lanes = filteredWeek.all_day;
     const rows = bandRows;
     if (!active) return;
     const packed = packBandLanes(

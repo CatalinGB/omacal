@@ -2,6 +2,7 @@
 <script lang="ts">
   import { responsesIdle, responseCheckpoint, reconcileResponses } from './lib/responses.svelte';
   import { applyVisibleHours } from './lib/visiblehours.svelte';
+  import { applyHideWeekends, hideWeekends } from './lib/hideweekends.svelte';
   import type { EventCopy } from './lib/api';
   import { formatDate } from './lib/datefmt';
   import { dateFormat } from './lib/date.svelte';
@@ -46,7 +47,7 @@
   import { setSetting, getSettings, type AppSettings, type WeekViewDays } from './lib/settings';
   import { TASKS_WIDTH_DEFAULT } from './lib/taskwidth';
   import { HOUR_PX_DEFAULT, hourPxStepped } from './lib/zoom';
-  import { padFor, sliceWeek, visibleIndex, windowHeld } from './lib/weekwindow';
+  import { padFor, sliceWeek, stepDay, stepDays, visibleIndex, windowHeld } from './lib/weekwindow';
   import { setClockFormat } from './lib/clock.svelte';
   import { setSecondZone } from './lib/secondzone.svelte';
   import { setTaskSort } from './lib/tasksort.svelte';
@@ -153,7 +154,10 @@
    *  preserve — the day itself moves; anywhere else the offset absorbs it. */
   function panView(days: number) {
     if (view === 'day') {
-      anchorMs = shiftKeyboardDay(anchorMs, days);
+      // `stepDays`, not `shiftKeyboardDay`: a swipe across a weekend skips
+      // it the same way the ‹/› buttons do, rather than taking three
+      // gestures to move past two days nothing draws.
+      anchorMs = stepDays(anchorMs, days, hideWeekends());
       return;
     }
     weekPanDays += days;
@@ -676,7 +680,7 @@
     keyboardActive = true;
     const moved = moveDay(keyboardDays, keyboardCursor, dir);
     if (moved.overflow) {
-      loadKeyboardDay(shiftKeyboardDay(keyboardCursor.dayStartMs, dir), null);
+      loadKeyboardDay(stepDay(keyboardCursor.dayStartMs, dir, hideWeekends()), null);
       return;
     }
     pendingKeyboardDay = null;
@@ -697,7 +701,7 @@
       // including empty ones. Continue after that edge, not merely after the
       // selected event's day, or an empty tail would fetch the same week again.
       const edge = keyboardDays[dir === 1 ? keyboardDays.length - 1 : 0];
-      loadKeyboardDay(shiftKeyboardDay(edge?.startMs ?? keyboardCursor.dayStartMs, dir), dir);
+      loadKeyboardDay(stepDay(edge?.startMs ?? keyboardCursor.dayStartMs, dir, hideWeekends()), dir);
       return;
     }
     pendingKeyboardDay = null;
@@ -868,6 +872,7 @@
         defaultEventDurationMinutes = s.defaultEventDurationMinutes;
         setClockFormat(s.timeFormat);
         applyVisibleHours(s.visibleStartHour, s.visibleEndHour);
+        applyHideWeekends(s.hideWeekends);
         setDateFormat(s.dateFormat);
         setSecondZone(s.secondTimezone);
         setTaskSort(s.taskSort);
@@ -1262,9 +1267,14 @@
       bigYearNum = Math.min(Math.max(bigYearNum + dir, currentYear), currentYear + 1);
       return;
     }
+    // Day view steps through `stepDay`, the one definition of a day "step"
+    // shared with the swipe and the keyboard's day cursor — see its own doc.
+    if (view === 'day') {
+      anchorMs = stepDay(anchorMs, dir, hideWeekends());
+      return;
+    }
     const d = new Date(anchorMs);
-    if (view === 'day') d.setDate(d.getDate() + dir);
-    else if (view === 'week') {
+    if (view === 'week') {
       d.setDate(d.getDate() + dir * (weekStartsToday ? weekViewDays : 7));
     }
     else if (view === 'month') {
@@ -2206,6 +2216,7 @@
       defaultEventDurationMinutes = s.defaultEventDurationMinutes;
       setClockFormat(s.timeFormat);
       applyVisibleHours(s.visibleStartHour, s.visibleEndHour);
+      applyHideWeekends(s.hideWeekends);
       setDateFormat(s.dateFormat);
       setSecondZone(s.secondTimezone);
       setTaskSort(s.taskSort);
