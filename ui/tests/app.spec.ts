@@ -5523,6 +5523,30 @@ test.describe('App: hiding weekends', () => {
       .toHaveAttribute('data-start-ms', String(APP_MON + 5 * day)); // the Saturday itself
   });
 
+  /** Month still draws every weekday, so its keyboard cursor must not skip
+   *  any when it steps off the grid's edge into the previous month — the
+   *  weekend skip belongs to the views that hide weekends. The stub's Month
+   *  grid is fixed and opens on Monday 27 July 2026, so the clock is put
+   *  there; a step back off that first cell is Sunday 26 July, not Friday
+   *  24. The cursor's status line names it, whichever grid is drawn. */
+  test('Month view\'s keyboard cursor steps onto weekends across the grid edge', async ({ page }) => {
+    const firstCell = Date.UTC(2026, 6, 27); // Mon 27 Jul 2026, the stub grid's first cell
+    await page.clock.setFixedTime(firstCell + 12 * 3_600_000);
+    await openApp(page);
+    await setHideWeekends(page, true);
+    await page.keyboard.press('3'); // Month view
+    await expect(page.locator(`.mcell[data-start-ms="${firstCell}"]`)).toBeVisible();
+
+    await page.keyboard.press('w'); // the cursor appears, on Tuesday
+    await page.keyboard.press('b'); // back onto the grid's first cell
+    await expect(page.locator('[data-kbd-selected-day]'))
+      .toHaveAttribute('data-start-ms', String(firstCell));
+
+    await page.keyboard.press('b'); // off the grid's edge
+    await expect(page.locator('.kbd-status')).toContainText('Sunday');
+    await expect(page.locator('.kbd-status')).toContainText('26');
+  });
+
 });
 
 test.describe('App: zooming the hours', () => {

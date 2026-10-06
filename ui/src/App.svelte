@@ -675,12 +675,17 @@
     anchorMs = startMs;
   }
 
+  /** Whether a keyboard step off the loaded days skips Saturday and Sunday:
+   *  only where they are hidden. Month draws every weekday whatever the
+   *  setting says, so its cursor walks onto a weekend like any other day. */
+  const keyboardSkipsWeekends = () => hideWeekends() && view !== 'month';
+
   function navigateSelectedDay(dir: -1 | 1) {
     if (!listable(view)) return;
     keyboardActive = true;
     const moved = moveDay(keyboardDays, keyboardCursor, dir);
     if (moved.overflow) {
-      loadKeyboardDay(stepDay(keyboardCursor.dayStartMs, dir, hideWeekends()), null);
+      loadKeyboardDay(stepDay(keyboardCursor.dayStartMs, dir, keyboardSkipsWeekends()), null);
       return;
     }
     pendingKeyboardDay = null;
@@ -701,7 +706,7 @@
       // including empty ones. Continue after that edge, not merely after the
       // selected event's day, or an empty tail would fetch the same week again.
       const edge = keyboardDays[dir === 1 ? keyboardDays.length - 1 : 0];
-      loadKeyboardDay(stepDay(edge?.startMs ?? keyboardCursor.dayStartMs, dir, hideWeekends()), dir);
+      loadKeyboardDay(stepDay(edge?.startMs ?? keyboardCursor.dayStartMs, dir, keyboardSkipsWeekends()), dir);
       return;
     }
     pendingKeyboardDay = null;
