@@ -865,6 +865,62 @@ test.describe('App', () => {
       await page.locator('.view').dispatchEvent('wheel', { deltaY: 120, cancelable: true });
       await expect(page.locator('h1')).toHaveText('February 2024');
     });
+
+    test('a strong touch swipe pages the Month view', async ({ page }) => {
+      await page.goto(app('connected'));
+      await expect(page.locator('.vswitch button')).toHaveCount(5);
+      await page.keyboard.press('3');
+      await expect(page.locator('h1')).toHaveText('January 2024');
+      // A finger drag, up, fast enough and far enough to be strong. The moves
+      // are paced at ~16ms so the velocity estimate sees real speed rather than
+      // three events in one tick.
+      await page.locator('.view').evaluate((view) => new Promise<void>((resolve) => {
+        const fire = (type: string, y: number) => view.dispatchEvent(new PointerEvent(type, {
+          pointerType: 'touch', pointerId: 7, clientX: 120, clientY: y, bubbles: true,
+        }));
+        let y = 400;
+        fire('pointerdown', y);
+        const step = () => {
+          y -= 40;
+          fire('pointermove', y);
+          if (y > 280) { setTimeout(step, 16); } else { fire('pointerup', y); resolve(); }
+        };
+        setTimeout(step, 16);
+      }));
+      // Finger up = forward (the sheet follows the finger).
+      await expect(page.locator('h1')).toHaveText('February 2024');
+    });
+
+    test('a clipped Month scrolls before it pages', async ({ page }) => {
+      // Short enough that the six rows no longer fit the view.
+      await page.setViewportSize({ width: 1280, height: 400 });
+      await page.goto(app('connected'));
+      await expect(page.locator('.vswitch button')).toHaveCount(5);
+      await page.keyboard.press('3');
+      await expect(page.locator('h1')).toHaveText('January 2024');
+      const grid = page.locator('.view .grid');
+      expect(await grid.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(10);
+      // Not at an edge: the period scrolls, so the wheel must not page.
+      await page.locator('.view').dispatchEvent('wheel', { deltaY: 120, cancelable: true });
+      await expect(page.locator('h1')).toHaveText('January 2024');
+      // At the edge, the very same wheel pages.
+      await grid.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+      await page.locator('.view').dispatchEvent('wheel', { deltaY: 120, cancelable: true });
+      await expect(page.locator('h1')).toHaveText('February 2024');
+    });
+
+    test('landing on a period prefetches the next one', async ({ page }) => {
+      await page.goto(app('connected'));
+      await expect(page.locator('.vswitch button')).toHaveCount(5);
+      await page.keyboard.press('3'); // January 2024
+      await expect(page.locator('h1')).toHaveText('January 2024');
+      // February is fetched before any gesture asks for it, so the snap after a
+      // page has its target ready (ticket 04).
+      await expect.poll(() => page.evaluate(() =>
+        (window as any).__harness.calls.some(
+          (c: any) => c.cmd === 'get_month' && c.args.month === 2),
+      )).toBe(true);
+    });
   });
 
   test('H and L step by the current view\'s unit', async ({ page }) => {
