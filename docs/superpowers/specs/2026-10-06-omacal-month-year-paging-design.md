@@ -120,7 +120,21 @@ restated here as the spec's contract:
   the finger natively, so touch pages only a period that fits. (The wheel's
   edge-chain is exact; touch's is deliberately coarser.)
 
-## 7. Testing
+## 7. Alternatives considered
+
+**The Week grid's continuous pan.** Week moves by dragging a track of days under
+the finger, handing whole days up as they are crossed and springing to a boundary
+(`WeekGrid.wheelPan`; the primitives — `velocityOf`, `settleTarget`,
+`springPlan`/`springAt`, `padFor`, `windowHeld` — live in `weekwindow.ts`). A
+continuous Month/Year version was considered and **set aside**: the discrete page
+is simpler, and it preserves the "one period per gesture" promise exactly, where a
+track that follows momentum does not. The pan was re-raised 2026-10-07 after the
+snap shipped and consciously deferred, not forgotten — the choice is put to the
+upstream author on the pull request. Because the pan primitives are already
+shared, it is a tractable follow-up if preferred; only the Month/Year rendering
+and the discrete machinery here would change.
+
+## 8. Testing
 
 - `ui/tests/periodscroll.spec.ts` — the pure rules directly: one notch is one
   page; small events gather to the threshold; the lock swallows the tail and a
@@ -134,7 +148,7 @@ restated here as the spec's contract:
   code** (the lock, the threshold, the `step` call, and the guard) before its
   green.
 
-## 8. Definition of done
+## 9. Definition of done
 
 - A vertical wheel over the Month grid pages one month; over the Year grid, one
   year; the anchor survives.
