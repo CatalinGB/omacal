@@ -1225,6 +1225,10 @@
   }
 
   function goToday() {
+    // The prefetch is keyed to the month we were showing; a jump to today
+    // leaves it pointing at the wrong one (ticket 04's eviction rule).
+    monthCache.clear();
+    yearCache.clear();
     const today = dayStart(Date.now());
     // The pan is a peek; Today is the contract that ends it (spec §3).
     weekPanDays = 0;
@@ -1423,6 +1427,8 @@
   // point of this task (spec §5): without it, Day view opens on today
   // instead of the day that was actually clicked.
   function handleDayPick(startMs: number) {
+    monthCache.clear();
+    yearCache.clear();
     pendingKeyboardDay = null;
     pendingEventMove = null;
     selectKeyboard(dayCursor(startMs));
