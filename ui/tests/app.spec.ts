@@ -909,6 +909,31 @@ test.describe('App', () => {
       await expect(page.locator('h1')).toHaveText('February 2024');
     });
 
+    test('Ctrl+wheel does not page', async ({ page }) => {
+      await page.goto(app('connected'));
+      await expect(page.locator('.vswitch button')).toHaveCount(5);
+      await page.keyboard.press('3');
+      await expect(page.locator('h1')).toHaveText('January 2024');
+      await page.locator('.view').dispatchEvent('wheel', { deltaY: 120, ctrlKey: true, cancelable: true });
+      await expect(page.locator('h1')).toHaveText('January 2024');
+    });
+
+    test('a sync after a page refetches the shown month', async ({ page }) => {
+      await page.goto(app('connected'));
+      await expect(page.locator('.vswitch button')).toHaveCount(5);
+      await page.keyboard.press('3');
+      await expect(page.locator('h1')).toHaveText('January 2024');
+      await page.locator('.view').dispatchEvent('wheel', { deltaY: 120, cancelable: true });
+      await expect(page.locator('h1')).toHaveText('February 2024');
+      const febCalls = () => page.evaluate(() => (window as any).__harness.calls
+        .filter((c: any) => c.cmd === 'get_month' && c.args.month === 2).length);
+      const before = await febCalls();
+      await page.evaluate(() => window.__harness.emit('sync-finished', { upserted: 1 }));
+      // The sync's reload must fetch February for real, not draw the prefetch
+      // that landed us here (review 2026-10-08).
+      await expect.poll(febCalls).toBeGreaterThan(before);
+    });
+
     test('landing on a period prefetches the next one', async ({ page }) => {
       await page.goto(app('connected'));
       await expect(page.locator('.vswitch button')).toHaveCount(5);

@@ -1016,6 +1016,11 @@
   const monthCache = new Map<string, MonthPayload>();
   const yearCache = new Map<number, YearPayload>();
 
+  /** Drop the prefetches. Used when the data under them may have changed (a
+   *  sync, a write) and when the view or the anchor moves to another period, so
+   *  a period fetched before the change is never drawn after it. */
+  function clearPeriodCaches() { monthCache.clear(); yearCache.clear(); }
+
   async function loadWeek(kind: 'day' | 'week' | 'range', target: number, pad: number, days?: WeekViewDays) {
     const req = ++weekReq;
     // Snapshot once: queue changes must not drive the view's fetch effect.
@@ -1039,10 +1044,14 @@
   async function loadMonth(year: number, monthNum: number) {
     const req = ++monthReq;
     // A prefetched period draws with no IPC at all — the whole point of the
-    // cache (ticket 04). Still stamped, so a fetch already in flight for an
-    // older period cannot land on top of it.
-    const cached = monthCache.get(`${year}-${monthNum}`);
-    if (cached) { month = cached; error = null; return; }
+    // cache (ticket 04). It serves the page *once* and is dropped: a later
+    // fetch for the same month (a sync, a write) must fall through to the
+    // store, or the month would stop updating after the page it landed on
+    // (review 2026-10-08). Still stamped, so a fetch in flight for an older
+    // period cannot land on top of it.
+    const key = `${year}-${monthNum}`;
+    const cached = monthCache.get(key);
+    if (cached) { monthCache.delete(key); month = cached; error = null; return; }
     const responseVersion = untrack(responseCheckpoint);
     try {
       const m = await getMonth(year, monthNum);
@@ -1059,7 +1068,7 @@
   async function loadYear(y: number) {
     const req = ++yearReq;
     const cached = yearCache.get(y);
-    if (cached) { year = cached; error = null; return; }
+    if (cached) { yearCache.delete(y); year = cached; error = null; return; }
     const responseVersion = untrack(responseCheckpoint);
     try {
       const p = await getYear(y);
@@ -1165,6 +1174,10 @@
   // `reload()` re-runs whatever `fetchPlan` currently says, so it follows the
   // view actually on screen rather than assuming Week.
   async function reload(): Promise<void> {
+    // `sync-finished` and every write path land here (through `refreshAfterWrite`
+    // / `refreshAfterResponse`), so a prefetch made before them is dropped here
+    // rather than drawn stale (review 2026-10-08).
+    clearPeriodCaches();
     await runFetchPlan(fetchPlan);
   }
 
@@ -1227,8 +1240,7 @@
   function goToday() {
     // The prefetch is keyed to the month we were showing; a jump to today
     // leaves it pointing at the wrong one (ticket 04's eviction rule).
-    monthCache.clear();
-    yearCache.clear();
+    clearPeriodCaches();
     const today = dayStart(Date.now());
     // The pan is a peek; Today is the contract that ends it (spec §3).
     weekPanDays = 0;
@@ -1246,8 +1258,7 @@
     // A prefetched period belongs to the view that fetched it; carrying it into
     // another surface would draw the wrong calendar there (ticket 04's eviction
     // rule).
-    monthCache.clear();
-    yearCache.clear();
+    clearPeriodCaches();
     // `listModeChoices`'s reason: a settings read still in flight when this
     // runs must not later overwrite whatever the switcher just chose.
     viewChoices += 1;
@@ -1427,8 +1438,7 @@
   // point of this task (spec §5): without it, Day view opens on today
   // instead of the day that was actually clicked.
   function handleDayPick(startMs: number) {
-    monthCache.clear();
-    yearCache.clear();
+    clearPeriodCaches();
     pendingKeyboardDay = null;
     pendingEventMove = null;
     selectKeyboard(dayCursor(startMs));

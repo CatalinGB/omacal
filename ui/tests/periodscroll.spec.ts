@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import {
-  PAGE_LOCK_MS, PAGE_THRESHOLD_PX,
+  PAGE_IDLE_MS, PAGE_THRESHOLD_PX,
   newAccumulator, resetAccumulator, swipePage, wheelPage,
 } from '../src/lib/periodscroll';
 import type { PanSample } from '../src/lib/weekwindow';
@@ -36,18 +36,34 @@ test.describe('the wheel page accumulator', () => {
     expect(third.page).toBe(1); // 60 >= 50
   });
 
-  test('the lock swallows the momentum tail, then a fresh flick pages again', () => {
-    const p = wheelPage(newAccumulator(), 100, 1000);
-    expect(p.page).toBe(1);
-    // The tail: seconds of events the trackpad emits after the hand has left.
-    const tail = wheelPage(p.acc, 100, 1000 + PAGE_LOCK_MS - 50);
-    expect(tail.page).toBe(0);
-    expect(tail.acc).toEqual(p.acc);
-    const tail2 = wheelPage(tail.acc, 100, 1000 + PAGE_LOCK_MS - 10);
-    expect(tail2.page).toBe(0);
-    // After the lock, a deliberate new flick earns its page.
-    const after = wheelPage(tail2.acc, 100, 1000 + PAGE_LOCK_MS + 10);
-    expect(after.page).toBe(1);
+  test('the lock re-arms on every tail event, then a quiet gap frees it', () => {
+    const first = wheelPage(newAccumulator(), 100, 1000);
+    expect(first.page).toBe(1);
+    let a = first.acc;
+    // The tail: dense events, each dropped and each re-arming the lock, so the
+    // gesture stays one page however long the momentum runs.
+    for (let t = 1016; t < 2000; t += 16) {
+      const r = wheelPage(a, 100, t);
+      expect(r.page).toBe(0);
+      a = r.acc;
+    }
+    // Quiet past the idle window ends the gesture, so the next flick is a new
+    // one and earns its page.
+    const fresh = wheelPage(a, 100, 2000 + PAGE_IDLE_MS + 20);
+    expect(fresh.page).toBe(1);
+  });
+
+  test('a long momentum tail pages exactly once', () => {
+    // The review's pin (2026-10-08): a touchpad emits for a second or more
+    // after the hand leaves, and a fixed lock lapses mid-tail and pages again.
+    let a = newAccumulator();
+    let pages = 0;
+    for (let t = 0; t <= 1500; t += 16) {
+      const r = wheelPage(a, 120, t);
+      a = r.acc;
+      if (r.page !== 0) pages += 1;
+    }
+    expect(pages).toBe(1);
   });
 
   test('a slow drag cannot bank travel across gestures', () => {

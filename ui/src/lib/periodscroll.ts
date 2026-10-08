@@ -15,14 +15,17 @@ import { STRONG_SWIPE_MIN_PX, STRONG_SWIPE_PX_PER_MS, velocityOf, type PanSample
  *  need a few, which is what stops a stray two-finger wobble from paging. */
 export const PAGE_THRESHOLD_PX = 50;
 
-/** After a page, wheel events for this long belong to the gesture's tail and
- *  are dropped. Without the lock a single trackpad flick pages across many
- *  periods: the momentum keeps emitting after the hand has left (the prototype
- *  `artifacts/paging-feel.html` shows the runaway at lock 0). */
+/** How long after a page the tail is ignored before it would count again. The
+ *  lock is **not fixed**: every tail event re-arms it by `PAGE_IDLE_MS`, so it
+ *  ends only once the momentum goes quiet. A touchpad keeps emitting for a
+ *  second or more after the hand leaves, and a fixed lock lapses mid-tail and
+ *  lets a second page through (review 2026-10-08). Week ends its pan the same
+ *  way (`panLull`/`PAN_LULL_MS`). */
 export const PAGE_LOCK_MS = 350;
 
-/** A gap this long ends the gesture: the accumulator starts over, so a slow,
- *  deliberate drag cannot quietly bank travel across separate gestures. */
+/** A gap this long ends the gesture. It is both the idle reset — the
+ *  accumulator starts over, so a slow drag cannot quietly bank travel across
+ *  separate gestures — and the window each tail event re-arms the lock to. */
 export const PAGE_IDLE_MS = 180;
 
 /** The snap's travel time and easing, shared with `App`'s animated page. */
@@ -48,9 +51,10 @@ export function newAccumulator(): PageAccumulator {
 export function wheelPage(
   a: PageAccumulator, dy: number, now: number,
 ): { acc: PageAccumulator; page: -1 | 0 | 1 } {
-  // Locked: this is the last gesture's tail. Dropped whole, not accumulated, or
-  // the tail would merely page a little later.
-  if (now < a.lockedUntil) return { acc: a, page: 0 };
+  // This is the last gesture's tail. Dropped whole, not accumulated (or the
+  // tail would merely page a little later), and the lock is re-armed so it ends
+  // only after `PAGE_IDLE_MS` of quiet however long the momentum runs.
+  if (now < a.lockedUntil) return { acc: { ...a, lockedUntil: now + PAGE_IDLE_MS }, page: 0 };
   const acc = a.acc + dy;
   if (Math.abs(acc) < PAGE_THRESHOLD_PX) return { acc: { ...a, acc }, page: 0 };
   // The one page. The lock starts now, not at lift, because a wheel has no

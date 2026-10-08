@@ -41,6 +41,9 @@ export function attachPeriodPaging(host: HTMLElement, cb: PagingCallbacks): () =
 
   function onWheel(e: WheelEvent) {
     if (!cb.active() || cb.blocked()) return;
+    // Ctrl+wheel is the app's zoom gesture — Week zooms the hours with it, and
+    // `App` cancels the browser's own page zoom — so it is never a page here.
+    if (e.ctrlKey) return;
     // Vertical only (ticket 01): a horizontal-dominant gesture is not ours,
     // and neither is a wheel with no vertical travel.
     if (e.deltaY === 0 || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
