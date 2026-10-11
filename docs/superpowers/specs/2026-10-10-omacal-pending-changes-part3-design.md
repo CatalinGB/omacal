@@ -31,9 +31,13 @@ id of its own.
    date and time); the rest appear when it saves. Only the backend expands a
    rule.
 4. **While it saves it is inert.** A click opens nothing, and it cannot be
-   dragged, resized or right-click-edited. In Day and Week its hover tooltip
-   adds "Saving…"; Month and Big Year have no hover tooltip, so the dashed
-   look says it there. Once saved it is an ordinary event.
+   dragged, resized, right-click-edited or deleted from the keyboard; list
+   mode offers no Join for it (its call opens by id, and it has none yet). In
+   Day and Week its hover says "Saving…" (a timed block's tooltip, an
+   all-day chip's title); Month and Big Year have no hover tooltip, so the
+   dashed look says it there. A new event on a calendar that is not shown is
+   saved and counted but not drawn (loads leave that calendar out). Once
+   saved it is an ordinary event.
 5. **A refusal takes it away.** The header says `Could not create “<title>”:
    <reason>` with a **Reopen** button that opens a create form holding
    everything that was typed. The button lasts as long as that message does.
@@ -42,7 +46,10 @@ id of its own.
    the backend's sentence (as today), and the next sync brings it in. A
    CalDAV create whose PUT landed but whose local half failed (resync, lookup,
    read-back) reports the same sentence, so it is never offered for Reopen
-   (whole-branch review, 2026-10-10).
+   (whole-branch review, 2026-10-10). The same rule holds for an edit, a
+   calendar move or a delete: one the CalDAV server took while the local
+   refresh failed reports `SAVED_NOT_STORED`, and the change stays drawn
+   until the next sync instead of being undone as a refusal (2026-10-11).
 7. **Navigating away and back** keeps it, in every view.
 8. **A requested Meet link** appears once saved; the title and time show at
    once.

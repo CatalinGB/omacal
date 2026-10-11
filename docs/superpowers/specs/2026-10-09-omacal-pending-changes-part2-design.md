@@ -35,9 +35,12 @@ change visibly. This spec adds one change kind and teaches the overlays it.
    - **all-day on or off for "following" or "all events"** of a series;
    - **adding a Google Meet link** (the link exists only once Google mints
      it); removing one shows at once.
-   These are still queued: the meeting is locked, counted in "Saving" and
-   marked as saving (dashed), but its title and time are drawn as they were
-   until the save lands.
+   The first two are still queued: the meeting is locked, counted in
+   "Saving" and marked as saving (dashed), but its title and time are drawn
+   as they were until the save lands. A Meet link being added is different:
+   the rest of the edit (title, time, the other values) is drawn at once, and
+   only the link itself waits for the save (§3 maps it so). *Wording
+   corrected 2026-10-11.*
 6. **"Following" and "all events"** of a series: every visible occurrence
    takes the new values and shifts by the same time change, exactly as part
    1's moves do.
