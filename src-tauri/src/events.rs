@@ -1141,6 +1141,17 @@ pub(crate) const CREATED_NOT_STORED: &str =
     "The event was created on Google, but OmaCal could not record it locally. \
      The next sync will bring it in — do not create it again.";
 
+/// What an edit, move or delete reports when the server took it and the local
+/// half did not (a CalDAV resync after the write failed).
+///
+/// [`CREATED_NOT_STORED`]'s rule for changes: a fixed literal, safelisted
+/// verbatim in `errors.rs`, because reported as an ordinary failure it reads
+/// as a refusal, and the app undoes on screen a change that happened. The UI
+/// recognises it, keeps the change drawn, and the next sync brings it in.
+pub(crate) const SAVED_NOT_STORED: &str =
+    "The change was saved, but OmaCal could not record it locally. \
+     The next sync will bring it in.";
+
 /// What a CalDAV move reports when the copy landed and the original would not
 /// go — the one partial outcome the PUT-then-DELETE order can produce.
 ///

@@ -15,6 +15,7 @@
   import { dateKey, type DayWeather } from './weather';
   import type { ListDay } from './filmstrip';
   import { cursorNamesEvent, type KeyboardCursor } from './keyboardnav';
+  import { isUnsaved } from './pendingview';
 
   let { days, weather = null, weatherStale = false, onweather = null, revealNowRequest = 0, keyboardCursor = null, onopen }: {
     /** Already grouped, ordered and emptied of blank days by `filmstrip.ts`.
@@ -226,7 +227,7 @@
                   </span>
                 {/if}
               </button>
-              {#if joinable(ev)}
+              {#if joinable(ev) && !isUnsaved(ev)}
                 <!-- A sibling of the row button, never inside it — nested
                      interactive elements are where keyboards and readers go
                      to die. It still *reads* as part of the left cluster:

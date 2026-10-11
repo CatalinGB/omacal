@@ -2326,6 +2326,70 @@ test.describe('App', () => {
         await page.evaluate(() => window.__harness.releaseWrite());
       });
 
+      test('list mode offers no Join on a new event still saving', async ({ page }) => {
+        // Its call opens by id on the backend, and an unsaved event has none.
+        await writable(page);
+        await page.evaluate(() => window.__harness.holdNextWrite('create_event'));
+        await createLunch(page, (f) => f.getByLabel('Location', { exact: true }).fill('https://us02web.zoom.us/j/123456789'));
+        await page.keyboard.press('f');
+        const row = page.locator('li.srow-li').filter({ hasText: 'Lunch' });
+        await expect(row).toHaveCount(1);
+        await expect(row.getByRole('button', { name: 'Join video call' })).toHaveCount(0);
+        await page.evaluate(() => window.__harness.releaseWrite());
+      });
+
+      test('a new all-day event\'s chip says it is saving', async ({ page }) => {
+        await writable(page);
+        await page.evaluate(() => window.__harness.holdNextWrite('create_event'));
+        await createLunch(page, (f) => f.getByLabel('All day').check());
+        await expect(chip(page, 'Lunch')).toHaveAttribute('title', /Saving…/);
+        await page.evaluate(() => window.__harness.releaseWrite());
+      });
+
+      /** events.rs `SAVED_NOT_STORED`: the server took the write, only the
+       *  local refresh failed. Not a refusal: the change stays drawn. */
+      const SAVED_NOT_STORED = 'The change was saved, but OmaCal could not record it locally. The next sync will bring it in.';
+
+      test('an edit the server took but OmaCal could not record stays drawn until the sync', async ({ page }) => {
+        await writable(page);
+        await page.evaluate((m) => { window.__harness.holdNextSync(); window.__harness.failNextUpdate(m); }, SAVED_NOT_STORED);
+        await openBoardPrepForm(page);
+        await editForm(page).getByLabel('Title', { exact: true }).fill('Board review');
+        await editForm(page).getByRole('button', { name: 'Save' }).click();
+        await expect(page.locator('.err')).toContainText('The change was saved');
+        await expect(block(page, 'Board review')).toHaveClass(/pending/);
+        await page.evaluate(() => window.__harness.releaseSync());
+        await expect(block(page, 'Board review')).toHaveCount(0); // the harness never changed it
+      });
+
+      test('a delete the server took but OmaCal could not record stays gone', async ({ page }) => {
+        await writable(page);
+        await page.evaluate(() => { window.__harness.holdNextSync(); window.__harness.holdNextWrite('delete_event_cmd'); });
+        await block(page, 'Board prep').click();
+        await page.getByRole('button', { name: 'Delete', exact: true }).click();
+        await confirmPanel(page).getByRole('button', { name: /^Delete/ }).last().click();
+        await expect(block(page, 'Board prep')).toHaveCount(0);
+        await page.evaluate((m) => window.__harness.rejectWrite(m), SAVED_NOT_STORED);
+        await expect(page.locator('.err')).toContainText('The change was saved');
+        await expect(block(page, 'Board prep')).toHaveCount(0);
+        await page.evaluate(() => window.__harness.releaseSync());
+      });
+
+      test('a move the server took but OmaCal could not record stays where it was dropped', async ({ page }) => {
+        await writable(page);
+        await page.evaluate(() => { window.__harness.holdNextSync(); window.__harness.holdNextWrite('update_event'); });
+        const before = await topOfBlock(page, 'Board prep');
+        await dragBy(page, 'Board prep', 60);
+        await expect(block(page, 'Board prep')).toHaveClass(/pending/);
+        const moved = await topOfBlock(page, 'Board prep');
+        expect(moved).toBeGreaterThan(before + 20);
+        await page.evaluate((m) => window.__harness.rejectWrite(m), SAVED_NOT_STORED);
+        await expect(page.locator('.err')).toContainText('The change was saved');
+        await expect(block(page, 'Board prep')).toHaveClass(/pending/);
+        expect(await topOfBlock(page, 'Board prep')).toBeCloseTo(moved, 0);
+        await page.evaluate(() => window.__harness.releaseSync());
+      });
+
       test('a refused create offers to reopen what was typed', async ({ page }) => {
         await writable(page);
         await page.evaluate(() => window.__harness.holdNextWrite('create_event'));

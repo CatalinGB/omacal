@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { PendingQueue, storeHoldsShift, type Work } from '../src/lib/pendingqueue';
+import { landedButNotStored, PendingQueue, storeHoldsShift, type Work } from '../src/lib/pendingqueue';
 import type { PendingChange } from '../src/lib/pendingview';
 
 const move = (id: number, from = 100, to = 200): Extract<PendingChange, { kind: 'move' }> =>
@@ -190,4 +190,13 @@ test('a write that says the store holds it reloads before its sync, so the chang
   expect(q.changes()).toHaveLength(0);
   s.resolve();
   await done;
+});
+
+test('the backend\'s landed-but-not-stored sentences are told from a refusal', () => {
+  // events.rs CREATED_NOT_STORED and SAVED_NOT_STORED: the server took the
+  // write, only the local half failed, so the change must not be undone.
+  expect(landedButNotStored('The event was created on Google, but OmaCal could not record it locally. The next sync will bring it in — do not create it again.')).toBe(true);
+  expect(landedButNotStored('The change was saved, but OmaCal could not record it locally. The next sync will bring it in.')).toBe(true);
+  expect(landedButNotStored(new Error('The change was saved, but OmaCal could not record it locally. The next sync will bring it in.'))).toBe(true);
+  expect(landedButNotStored('this calendar is not writable from OmaCal')).toBe(false);
 });

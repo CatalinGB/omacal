@@ -5,6 +5,7 @@
   import type { Rect } from './position';
   import { gutterWidth } from './secondzone.svelte';
   import { cursorNamesEvent, type KeyboardCursor } from './keyboardnav';
+  import { isUnsaved } from './pendingview';
 
   let { lanes, events, overflow, columns = 7, visible = columns, vis = 0, pan = 0, sliding = false, expanded = false, onexpand = null, dayStarts = [], keyboardCursor = null, onopen }:
     { lanes: Lane[]; events: UiEvent[]; overflow: number[]; columns?: number;
@@ -85,7 +86,7 @@
             --span:{lane.end_col - lane.start_col + 1};
             --cal:{ev.color};
           "
-          title={ev.title}
+          title={isUnsaved(ev) ? `${ev.title} · Saving…` : ev.title}
           onclick={(e) => open(ev, e)}
         >
           {lane.cont_left ? '‹ ' : ''}{ev.title}

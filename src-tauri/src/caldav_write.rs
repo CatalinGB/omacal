@@ -326,6 +326,17 @@ fn created_but<T>(r: anyhow::Result<T>) -> anyhow::Result<T> {
     })
 }
 
+/// [`created_but`]'s rule for an edit, a calendar move or a delete: past the
+/// server's write, a failure in the local half collapses into the safelisted
+/// [`crate::events::SAVED_NOT_STORED`], so the UI keeps the change drawn until
+/// the next sync instead of undoing what happened. The cause goes to the log.
+fn saved_but<T>(r: anyhow::Result<T>) -> anyhow::Result<T> {
+    r.map_err(|e| {
+        tracing::error!(%e, "changed on the CalDAV server, but the local half failed");
+        anyhow::anyhow!(crate::events::SAVED_NOT_STORED)
+    })
+}
+
 /// The attendee list a write owns, out of the guest list the form sends.
 ///
 /// `None` all the way through: a path with no guest editor (a drag, the CLI's
@@ -446,15 +457,21 @@ pub(crate) async fn update(
         client.put(&new_href, &ics, None).await.map_err(friendly)?;
     }
 
-    resync(state, master.calendar_id).await?;
-    let row = row_id_by_uid(state, master.calendar_id, &detail_uid).await;
-    // An exception the resync collapsed away (or a row the server renamed)
-    // falls back to the master — the popover shows *something* true.
-    let row = match row {
-        Ok(r) => r,
-        Err(_) => row_id_by_uid(state, master.calendar_id, &uid).await?,
-    };
-    crate::events::event_detail_impl(state, row).await
+    saved_but(
+        async {
+            resync(state, master.calendar_id).await?;
+            let row = row_id_by_uid(state, master.calendar_id, &detail_uid).await;
+            // An exception the resync collapsed away (or a row the server
+            // renamed) falls back to the master — the popover shows
+            // *something* true.
+            let row = match row {
+                Ok(r) => r,
+                Err(_) => row_id_by_uid(state, master.calendar_id, &uid).await?,
+            };
+            crate::events::event_detail_impl(state, row).await
+        }
+        .await,
+    )
 }
 
 /// Google's response vocabulary rendered as `PARTSTAT` — two spellings of
@@ -591,10 +608,15 @@ pub(crate) async fn move_to(
 
     // Both collections, because both changed. The destination is resynced
     // last so the row this returns is the one it just brought in.
-    resync(state, master.calendar_id).await?;
-    resync(state, target_calendar_id).await?;
-    let row = row_id_by_uid(state, target_calendar_id, &uid).await?;
-    crate::events::event_detail_impl(state, row).await
+    saved_but(
+        async {
+            resync(state, master.calendar_id).await?;
+            resync(state, target_calendar_id).await?;
+            let row = row_id_by_uid(state, target_calendar_id, &uid).await?;
+            crate::events::event_detail_impl(state, row).await
+        }
+        .await,
+    )
 }
 
 /// Deletes an event, one occurrence, or the rest of a series.
@@ -636,7 +658,7 @@ pub(crate) async fn delete(
         client.put(&href, &excluded, master.etag.as_deref()).await.map_err(friendly)?;
     }
 
-    resync(state, master.calendar_id).await
+    saved_but(resync(state, master.calendar_id).await)
 }
 
 #[cfg(test)]
@@ -646,6 +668,15 @@ mod tests {
     /// Past the PUT the event exists on the server, so a failure in the local
     /// half must say so rather than read as a failed create (part 3 review):
     /// the UI keeps it drawn, offers no Reopen, and the next sync heals it.
+    /// An edit, move or delete whose server write landed: a failure in the
+    /// local half keeps the change (the UI holds it drawn until the sync).
+    #[test]
+    fn a_failure_after_a_change_landed_reads_as_saved_not_stored() {
+        let failed: anyhow::Result<()> = saved_but(Err(anyhow::anyhow!("resync timed out")));
+        assert_eq!(failed.unwrap_err().to_string(), crate::events::SAVED_NOT_STORED);
+        assert_eq!(saved_but(Ok(3)).unwrap(), 3);
+    }
+
     #[test]
     fn a_failure_after_the_put_reads_as_created_not_stored() {
         let failed: anyhow::Result<i64> =

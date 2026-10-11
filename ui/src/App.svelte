@@ -6,7 +6,7 @@
     queueChange, isPending, resyncPending, closeWhenEditClears, unsavedId,
   } from './lib/pending.svelte';
   import { overlayWeek, overlayMonth, overlayBigYear, overlayDetail, isUnsaved, type PendingChange } from './lib/pendingview';
-  import { storeHoldsShift } from './lib/pendingqueue';
+  import { landedButNotStored, storeHoldsShift } from './lib/pendingqueue';
   import { createChange, editChange } from './lib/pendingedit';
   import { applyVisibleHours } from './lib/visiblehours.svelte';
   import { applyHideWeekends, hideWeekends } from './lib/hideweekends.svelte';
@@ -2025,6 +2025,29 @@
     },
   };
 
+  /** The banner's button for a refused create (part 3 spec §6): shown only
+   *  while the banner still holds the message it was set with, so the next
+   *  load (which clears the banner) or a later error takes it away. */
+  let retry = $state<{ forError: string; label: string; run: () => void } | null>(null);
+
+  /**
+   * A queued write, kept when the server took it and only the local half
+   * failed (`landedButNotStored`: events.rs `CREATED_NOT_STORED` and
+   * `SAVED_NOT_STORED`). That is not a refusal — the change happened — so it
+   * stays drawn: the banner says what happened, and the write resolves
+   * without `true`, so the follow-up sync brings it in. Anything else is a
+   * refusal, rethrown for the queue to undo.
+   */
+  async function keptIfLanded(write: () => Promise<unknown>): Promise<unknown> {
+    try {
+      return await write();
+    } catch (e) {
+      if (!landedButNotStored(e)) throw e;
+      error = String(e);
+      return false;
+    }
+  }
+
   /**
    * A new event, drawn at once and created behind (part 3 spec, 2026-10-10).
    *
@@ -2039,25 +2062,14 @@
    * which would invite creating it again. It stays drawn, the banner keeps the
    * sentence, and the follow-up sync fetches it like any other.
    */
-  /** The banner's button for a refused create (part 3 spec §6): shown only
-   *  while the banner still holds the message it was set with, so the next
-   *  load (which clears the banner) or a later error takes it away. */
-  let retry = $state<{ forError: string; label: string; run: () => void } | null>(null);
-
   function queueCreate(result: EventFormResult) {
     error = null;
     const title = result.fields.summary ?? '(no title)';
     void queueChange(createChange(result, calendars, ymdMs, unsavedId()), {
-      write: async () => {
-        try {
-          await createEvent(result.calendarId, result.fields, result.notify);
-          return true;
-        } catch (e) {
-          if (!String(e).startsWith('The event was created on Google')) throw e;
-          error = String(e);
-          return false;
-        }
-      },
+      write: () => keptIfLanded(async () => {
+        await createEvent(result.calendarId, result.fields, result.notify);
+        return true;
+      }),
       ...queuedRefresh,
       onfailure: (e) => {
         const message = `Could not create “${title}”: ${String(e)}`;
@@ -2111,10 +2123,10 @@
           //
           // The answer is the row read back after the write: when its times
           // moved, the store already holds the change (`storeHoldsShift`).
-          write: async () => storeHoldsShift(request.rowTimes, await updateEvent(
+          write: () => keptIfLanded(async () => storeHoldsShift(request.rowTimes, await updateEvent(
             request.id, result.scope, request.occurrenceStartMs, result.fields, result.notify,
             result.calendarId,
-          )),
+          ))),
           ...queuedRefresh,
           onfailure: (e) => { error = `Could not save “${title}”: ${String(e)}`; },
         },
@@ -2219,7 +2231,7 @@
     hold: symbol,
   ) {
     void commitChange(hold, moveChange(event, span, choice.scope), {
-      write: async () => {
+      write: () => keptIfLanded(async () => {
         const detail = await getEventDetail(event.id);
         const value = valueFromDetail(detail, event.start_ms, event.end_ms);
         // The source instants are carried through untouched, and that is
@@ -2246,7 +2258,7 @@
           toEventInput(moved, value, zoneName()),
           choice.sendUpdates,
         ));
-      },
+      }),
       ...queuedRefresh,
       // The drop is undone on screen the moment Google refuses it, and says
       // why: §6's "a drag that appears to have worked and silently did not is
@@ -2278,7 +2290,7 @@
     error = null;
     const { detail, startMs } = target.occurrence;
     void queueChange({ kind: 'delete', id: detail.id, occurrenceStartMs: startMs, scope }, {
-      write: () => deleteEvent(detail.id, scope, startMs),
+      write: () => keptIfLanded(() => deleteEvent(detail.id, scope, startMs)),
       ...queuedRefresh,
       onfailure: (e) => { error = `Could not delete “${detail.title ?? 'this event'}”: ${String(e)}`; },
     });

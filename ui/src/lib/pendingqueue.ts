@@ -50,6 +50,20 @@ export function storeHoldsShift(
   return after.start_ms !== before.start_ms || after.end_ms !== before.end_ms;
 }
 
+/**
+ * Whether a write's error is one of the backend's fixed sentences for a write
+ * the server took while only the local half failed (events.rs
+ * `CREATED_NOT_STORED`, `SAVED_NOT_STORED`). That is not a refusal: the change
+ * exists, so it stays drawn (the write resolves without `true`, and the
+ * follow-up sync brings it in) and the banner says what happened. Matched
+ * inside the text, since a rejection may arrive wrapped (`Error: …`).
+ */
+export function landedButNotStored(error: unknown): boolean {
+  const s = String(error);
+  return s.includes('The event was created on Google, but OmaCal could not record it locally')
+    || s.includes('The change was saved, but OmaCal could not record it locally');
+}
+
 /** `seq` is null while held (a question is open) and set once committed.
  *  `saved`: Google took the write. `synced`: a sync that began after the write
  *  has finished, so the local store has it. `syncFailed`: that sync failed and

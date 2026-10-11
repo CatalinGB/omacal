@@ -100,6 +100,11 @@ const SAFE_EXACT: &[&str] = &[
     // reads as "the create failed", and the natural response to that mails
     // every guest a second invitation.
     crate::events::CREATED_NOT_STORED,
+    // src-tauri/src/events.rs — `SAVED_NOT_STORED`, the same rule for an edit,
+    // move or delete: raised by `caldav_write` only after the server's write
+    // succeeded. Fixed literal. Swallowed, it reads as a refusal and the UI
+    // undoes a change that happened.
+    crate::events::SAVED_NOT_STORED,
     // src-tauri/src/lib.rs — `BROWSER_FAILED`, raised where `sign_in` asks
     // the OS to open the consent page and the launcher fails or exits
     // non-zero. Fixed literal built by `anyhow!(BROWSER_FAILED)` with no
@@ -449,6 +454,15 @@ mod tests {
         assert_eq!(user_facing(&err), crate::events::CREATED_NOT_STORED);
     }
 
+    /// The same for an edit or delete the server took while the local half
+    /// failed: eaten, it reads as a refusal and the change is undone on screen
+    /// although it happened.
+    #[test]
+    fn the_saved_not_stored_sentence_reaches_the_user_whole() {
+        let err = anyhow::anyhow!(crate::events::SAVED_NOT_STORED);
+        assert_eq!(user_facing(&err), crate::events::SAVED_NOT_STORED);
+    }
+
     #[test]
     fn an_unrecognised_error_falls_back_to_something_generic() {
         let err = anyhow::anyhow!("Bearer ya29.a0AfB_pretend_access_token failed");
@@ -546,6 +560,9 @@ mod tests {
             // only after Google's insert succeeded, no interpolation, and
             // `create_event`'s `.map_err(user_facing)` adds no context.
             crate::events::CREATED_NOT_STORED,
+            // The same rule: raised only after the CalDAV server's write
+            // succeeded, no interpolation, no added context.
+            crate::events::SAVED_NOT_STORED,
             // Fixed literal raised by `anyhow!(BROWSER_FAILED)` where sign-in
             // asks the OS for a browser; the launcher's own error goes to
             // `tracing`, never into this string, and no `.context(..)` wraps
