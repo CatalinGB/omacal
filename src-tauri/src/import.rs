@@ -560,7 +560,10 @@ pub(crate) async fn run_file(
             continue;
         };
         match crate::events::create_event_body(state, calendar_id, input, "none").await {
-            Ok(_) => report.imported += 1,
+            Ok(_) => {
+                crate::upcoming::refresh_soon(state.pool.clone(), state.demo);
+                report.imported += 1;
+            }
             Err(e) => {
                 tracing::warn!(%e, summary = p.summary(), "import: one event refused");
                 report.failed.push(p);

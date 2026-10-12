@@ -179,7 +179,10 @@ pub(crate) async fn dispatch(state: &AppState, req: Request) -> serde_json::Valu
             match crate::events::create_event_body(state, calendar_id, fields, &send_updates)
                 .await
             {
-                Ok(detail) => ok_env(serde_json::json!(detail)),
+                Ok(detail) => {
+                    crate::upcoming::refresh_soon(state.pool.clone(), state.demo);
+                    ok_env(serde_json::json!(detail))
+                }
                 Err(m) => fail_env("refused", &m),
             }
         }
@@ -195,13 +198,19 @@ pub(crate) async fn dispatch(state: &AppState, req: Request) -> serde_json::Valu
             )
             .await
             {
-                Ok(detail) => ok_env(serde_json::json!(detail)),
+                Ok(detail) => {
+                    crate::upcoming::refresh_soon(state.pool.clone(), state.demo);
+                    ok_env(serde_json::json!(detail))
+                }
                 Err(m) => fail_env("refused", &m),
             }
         }
         Request::Delete { id, scope, occurrence_start_ms } => {
             match crate::events::delete_event_body(state, id, &scope, occurrence_start_ms).await {
-                Ok(()) => ok_env(serde_json::json!({ "deleted": true })),
+                Ok(()) => {
+                    crate::upcoming::refresh_soon(state.pool.clone(), state.demo);
+                    ok_env(serde_json::json!({ "deleted": true }))
+                }
                 Err(m) => fail_env("refused", &m),
             }
         }
@@ -211,7 +220,10 @@ pub(crate) async fn dispatch(state: &AppState, req: Request) -> serde_json::Valu
             )
             .await
             {
-                Ok(detail) => ok_env(serde_json::json!(detail)),
+                Ok(detail) => {
+                    crate::upcoming::refresh_soon(state.pool.clone(), state.demo);
+                    ok_env(serde_json::json!(detail))
+                }
                 Err(m) => fail_env("refused", &m),
             }
         }

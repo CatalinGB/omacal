@@ -29,16 +29,6 @@ fn base_url_for(kind: &str, server_url: Option<&str>) -> Result<String, String> 
     }
 }
 
-/// The client (and collection URL) behind one CalDAV calendar, with the
-/// read-only refusal every write path shares. Desktop wrapper injecting the
-/// keyring store; the walk itself is in `omacal-view::caldav_account`.
-pub(crate) async fn client_for_calendar(
-    state: &AppState,
-    calendar_id: i64,
-) -> anyhow::Result<(CalDavClient, String)> {
-    omacal_view::caldav_account::client_for_calendar(&*state.credentials, state, calendar_id).await
-}
-
 /// Connects (or reconnects) a CalDAV account: validates the credentials by
 /// running discovery, then stores the password, the account row, and the
 /// calendar list. Returns the account's display email.

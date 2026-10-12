@@ -595,18 +595,6 @@ pub(crate) use omacal_view::demo_sync_guard;
 #[cfg(test)]
 pub(crate) use omacal_view::DEMO_SYNC_MESSAGE;
 
-/// Whether a cached entry can be used as-is.
-///
-/// The token exchange now lives in `omacal-view::auth`; this wrapper injects
-/// the keyring store so `events.rs` call sites are unchanged.
-pub(crate) async fn access_token_for(state: &AppState, cfg: &Config, email: &str) -> anyhow::Result<String> {
-    omacal_view::auth::access_token_for(
-        state, &*state.credentials, &cfg.client_id, &cfg.client_secret, email,
-    )
-    .await
-}
-
-
 /// The window the app keeps synced.
 ///
 /// Extracted so the year views and the sync loop cannot disagree about where
@@ -652,6 +640,7 @@ mod today_of_month_tests {
 
 /// The fetch window a sync asks for; defined in `omacal-view` so the server
 /// reads the same one.
+#[cfg(test)]
 pub(crate) use omacal_view::synced_window;
 
 /// Desktop wrapper over `omacal-view::sync::sync_all`, injecting the keyring

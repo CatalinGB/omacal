@@ -6,10 +6,12 @@
 
 pub mod auth;
 pub mod caldav_account;
+pub mod caldav_write;
 pub mod calendars;
 pub mod commands;
 pub mod combined;
 pub mod errors;
+pub mod events;
 pub mod messages;
 /// Test-only: the golden-file mechanism the UI fixtures read. Gated so nothing
 /// that reads or writes `ui/tests/` is compiled into the shipped lib.
