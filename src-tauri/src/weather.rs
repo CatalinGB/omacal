@@ -25,6 +25,12 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use std::time::Duration;
 
+// The widget's location file and its parser moved to `omacal-view`, which the
+// settings read path needs without Tauri. Re-exported here so every
+// `weather::LOCATION_KEY` / `weather::parse_omarchy_location` call site is
+// unchanged; the fetch, cache and geocoding stay on this side.
+pub(crate) use omacal_view::weather::{parse_omarchy_location, LOCATION_KEY};
+
 /// Cached forecast JSON (our own compact shape, not Open-Meteo's).
 const CACHE_KEY: &str = "weather_cache";
 /// When the cache was written, ms epoch.
@@ -32,9 +38,6 @@ const CACHE_AT_KEY: &str = "weather_cache_at";
 /// Auto-detected coordinates, as `lat,lon|Name` — or `lat,lon|Country|country`
 /// when the connection only told the country — and when they were learned.
 const COORDS_KEY: &str = "weather_coords";
-/// The place set in OmaCal's own Settings (#117), in the Omarchy widget's
-/// file shape: `{name, latitude, longitude}`. Empty or absent means unset.
-pub(crate) const LOCATION_KEY: &str = "weather_location";
 const COORDS_AT_KEY: &str = "weather_coords_at";
 
 /// A sky changes slower than a calendar; Open-Meteo asks heavy users to stay
@@ -207,25 +210,6 @@ pub(crate) fn bucket_for_code(code: u16) -> &'static str {
         95 | 96 | 99 => "thunder",
         _ => "overcast",
     }
-}
-
-/// The Omarchy widget's location file, when this is an Omarchy machine and
-/// the user has set one: `{name, latitude, longitude}` — coordinates
-/// optional, a bare name geocodes below.
-pub(crate) fn parse_omarchy_location(raw: &str) -> Option<(Option<(f64, f64)>, String)> {
-    let v: serde_json::Value = serde_json::from_str(raw).ok()?;
-    let name = v.get("name")?.as_str()?.trim().to_string();
-    if name.is_empty() {
-        return None;
-    }
-    let coords = match (
-        v.get("latitude").and_then(|x| x.as_f64()),
-        v.get("longitude").and_then(|x| x.as_f64()),
-    ) {
-        (Some(lat), Some(lon)) => Some((lat, lon)),
-        _ => None,
-    };
-    Some((coords, name))
 }
 
 /// What wttr.in's `j1` says about where the connection is: coordinates, the

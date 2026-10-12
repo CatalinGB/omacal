@@ -759,38 +759,11 @@ pub fn apply_display_tz_early() {
     }
 }
 
-/// The IANA name of the zone this process spends its life in, frozen by
-/// [`freeze_effective_timezone`].
-static EFFECTIVE_TZ: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-
-/// Records the zone this process runs in, and **must run after
-/// [`apply_display_tz_early`]** — that is what exports `TZ`, and this is the
-/// first question asked of the answer.
-///
-/// **Frozen rather than read per call**, for the same reason `tz_watch`'s
-/// banner exists at all: the webview and libc capture the zone at process
-/// start and never ask again, so a machine that moves zones under a running
-/// app is still *drawing* the old one. A name that followed the move would
-/// label the grid with a zone it is not in — and would make the banner read
-/// "this machine moved to X, but times are still shown in X".
-pub fn freeze_effective_timezone() {
-    let _ = EFFECTIVE_TZ.set(system_zone_name());
-}
-
-/// The zone name every label in the UI is drawn from, and the `TZID` the
-/// event form stamps on a write — see [`freeze_effective_timezone`] for why
-/// it is a snapshot. A caller that never froze one (a test, a CLI path) gets
-/// a live read, which is the same answer everywhere it matters.
-pub fn effective_timezone() -> String {
-    EFFECTIVE_TZ.get().cloned().unwrap_or_else(system_zone_name)
-}
-
-/// `UTC` when jiff cannot name the zone — a `TZ` holding a POSIX rule
-/// rather than a name — which is the fallback `export` and the widget feed
-/// already take.
-fn system_zone_name() -> String {
-    jiff::tz::TimeZone::system().iana_name().unwrap_or("UTC").to_string()
-}
+/// The process-wide zone snapshot moved to `omacal-view`, which the settings
+/// read needs without Tauri. Re-exported at the crate root so `main` can still
+/// freeze it before Tauri exists and every `crate::effective_timezone()` call
+/// site is unchanged.
+pub use omacal_view::{effective_timezone, freeze_effective_timezone};
 
 /// The marker that says *omacal* exported `TZ`, as opposed to the user's own
 /// shell. It exists for the restart path: `app.restart()` re-execs with the

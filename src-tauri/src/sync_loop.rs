@@ -7,10 +7,12 @@
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, Manager};
 
-pub const DEFAULT_INTERVAL_MS: i64 = 5 * 60 * 1_000;
-/// Floor on the poll interval. Google's quota is finite and a desktop app has
-/// no business polling faster than this.
-pub const MIN_INTERVAL_MS: i64 = 60 * 1_000;
+// The two interval constants moved to `omacal-view`, which the settings read
+// path needs without Tauri. Re-exported here so every
+// `sync_loop::DEFAULT_INTERVAL_MS` / `sync_loop::MIN_INTERVAL_MS` call site is
+// unchanged.
+pub use omacal_view::settings::{DEFAULT_INTERVAL_MS, MIN_INTERVAL_MS};
+
 /// The floor `request_now` applies. Focusing the window is an explicit "give
 /// me fresh data" signal, so it gets a far shorter interval than the ticker —
 /// but an interval all the same: twenty alt-tabs used to mean twenty token

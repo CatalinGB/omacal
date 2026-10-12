@@ -22,7 +22,9 @@ pub mod settings;
 pub mod state;
 pub mod sync;
 pub mod tasks;
+pub mod theme;
 pub mod view;
+pub mod weather;
 pub mod webcal;
 pub mod write;
 
@@ -30,6 +32,11 @@ pub use state::{
     AppState, CachedTokens, CredentialStore, EventSink, GoogleConfig, NoGoogleConfig, NoopStore,
     UpdateNotice,
 };
+
+/// The process-wide zone snapshot the settings read reports. Re-exported at the
+/// crate root so `crate::effective_timezone()` keeps resolving for callers that
+/// had it that way, and so `main` can freeze it before Tauri exists.
+pub use settings::{effective_timezone, freeze_effective_timezone};
 
 /// Milliseconds since the Unix epoch.
 pub fn now_ms() -> i64 {
