@@ -3158,6 +3158,7 @@ dependencies = [
  "omacal-google",
  "omacal-store",
  "omacal-sync",
+ "omacal-view",
  "open",
  "reqwest 0.12.28",
  "serde",
@@ -3257,6 +3258,22 @@ dependencies = [
  "tracing",
  "url",
  "wiremock",
+]
+
+[[package]]
+name = "omacal-view"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "jiff",
+ "omacal-core",
+ "omacal-store",
+ "omacal-sync",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

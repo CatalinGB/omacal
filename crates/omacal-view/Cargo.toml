@@ -1,0 +1,24 @@
+[package]
+name = "omacal-view"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# The Tauri-free service layer: the view assembly (week/day/month/year
+# payloads), the field mapping shared with the write paths, and the small pure
+# helpers they sit on. `src-tauri` depends on it and re-exports what it always
+# exposed; `omacal-server` will depend on it directly. Nothing here may reach
+# for `tauri`.
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+jiff = "0.2.35"
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite"] }
+uuid = { version = "1", features = ["v4"] }
+omacal-core = { version = "0.1.0", path = "../omacal-core" }
+omacal-store = { version = "0.1.0", path = "../omacal-store" }
+omacal-sync = { version = "0.1.0", path = "../omacal-sync" }

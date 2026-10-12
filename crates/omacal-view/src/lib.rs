@@ -1,0 +1,31 @@
+//! The Tauri-free service layer.
+//!
+//! `src-tauri` re-exports what it exposed before, so the desktop app is
+//! unchanged; `omacal-server` depends on this directly. Nothing in this crate
+//! may reach for `tauri`.
+
+pub mod commands;
+pub mod combined;
+/// Test-only: the golden-file mechanism the UI fixtures read. Gated so nothing
+/// that reads or writes `ui/tests/` is compiled into the shipped lib.
+#[cfg(test)]
+pub mod golden;
+pub mod meeting;
+pub mod settings;
+pub mod view;
+pub mod write;
+
+/// Milliseconds since the Unix epoch.
+pub fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// The window a sync fetches: decisions ("what should I ask the provider for?")
+/// must read one definition.
+pub fn synced_window(now_ms: i64) -> (i64, i64) {
+    const DAY: i64 = 24 * 3_600_000;
+    (now_ms - 180 * DAY, now_ms + 365 * DAY)
+}

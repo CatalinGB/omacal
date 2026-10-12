@@ -18,10 +18,6 @@ mod events;
 mod export;
 mod fixtures;
 mod geocode;
-/// Test-only: the golden-file mechanism the UI fixtures read. Gated so nothing
-/// that reads or writes `ui/tests/` is compiled into the shipped app.
-#[cfg(test)]
-mod golden;
 pub(crate) mod webcal_subscription;
 mod icu_tz;
 mod import;
@@ -243,34 +239,9 @@ fn take_open_date(state: tauri::State<'_, AppState>) -> Option<String> {
     state.open_date.lock().expect("open date poisoned").take()
 }
 
-/// The display zone: the user's setting if present, otherwise the system zone.
-/// Every day boundary in the week grid is computed against this.
-fn display_tz(pool: &SqlitePool) -> String {
-    // `settings` is read on the sync task's runtime elsewhere; here we only
-    // need a cheap default, so fall back to the system zone.
-    let _ = pool;
-    jiff::tz::TimeZone::system()
-        .iana_name()
-        .unwrap_or("UTC")
-        .to_string()
-}
-
-/// `pad` on every day-grid command (2026-09-03): that many days either side
-/// of the window asked for, in the same payload, so the grid can slide into
-/// them under a finger before a fetch for the new window lands. The window
-/// itself is what the caller names; the padding is the backend's to walk
-/// out in the display zone. Bounded so a malformed invoke cannot widen one
-/// view into an unbounded query, the same reason `get_range` checks its
-/// count.
-const MAX_PAD_DAYS: u8 = 14;
-
-fn checked_pad(pad: Option<u8>) -> Result<usize, String> {
-    let pad = pad.unwrap_or(0);
-    if pad > MAX_PAD_DAYS {
-        return Err(format!("padding is at most {MAX_PAD_DAYS} days"));
-    }
-    Ok(pad as usize)
-}
+/// The display zone and the padded day-window assembly now live in
+/// `omacal-view::view`, so the server reads through the same code.
+pub(crate) use omacal_view::view::{checked_pad, display_tz};
 
 #[tauri::command]
 async fn get_week(
@@ -278,7 +249,7 @@ async fn get_week(
     week_start_ms: i64,
     pad: Option<u8>,
 ) -> Result<commands::WeekPayload, String> {
-    get_days_impl(&state.pool, week_start_ms, 7, checked_pad(pad)?).await
+    omacal_view::view::get_days(&state.pool, week_start_ms, 7, checked_pad(pad)?).await
 }
 
 #[tauri::command]
@@ -287,7 +258,7 @@ async fn get_day(
     day_start_ms: i64,
     pad: Option<u8>,
 ) -> Result<commands::WeekPayload, String> {
-    get_days_impl(&state.pool, day_start_ms, 1, checked_pad(pad)?).await
+    omacal_view::view::get_days(&state.pool, day_start_ms, 1, checked_pad(pad)?).await
 }
 
 /// A rolling Week-view window beginning at `day_start_ms`. The settings UI
@@ -303,42 +274,7 @@ async fn get_range(
     if !matches!(day_count, 3 | 5 | 7) {
         return Err("the rolling week can show 3, 5, or 7 days".to_string());
     }
-    get_days_impl(&state.pool, day_start_ms, day_count as usize, checked_pad(pad)?).await
-}
-
-/// `day_count` days from `day_start_ms`, with `pad` more on either side —
-/// see `MAX_PAD_DAYS`. The padded start is walked back in the display zone,
-/// so the window the caller named begins exactly `pad` columns in.
-async fn get_days_impl(
-    pool: &SqlitePool,
-    day_start_ms: i64,
-    day_count: usize,
-    pad: usize,
-) -> Result<commands::WeekPayload, String> {
-    let tz = display_tz(pool);
-    let start_ms = if pad == 0 {
-        day_start_ms
-    } else {
-        commands::day_start_shifted(day_start_ms, -(pad as i64), &tz)
-    };
-    let n = day_count + 2 * pad;
-    // Widen by a day either side so an event that begins just before the range
-    // (or a DST-lengthened final day) is not missed.
-    const DAY: i64 = 24 * 3_600_000;
-    let events = omacal_store::events_in_window(
-        pool,
-        start_ms - DAY,
-        start_ms + (n as i64 + 1) * DAY,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(if settings::combine_identical_events(pool).await {
-        commands::assemble_days_combining(&events, start_ms, n, &tz, true)
-    } else if n == 7 {
-        commands::assemble_week(&events, start_ms, &tz)
-    } else {
-        commands::assemble_days(&events, start_ms, n, &tz)
-    })
+    omacal_view::view::get_days(&state.pool, day_start_ms, day_count as usize, checked_pad(pad)?).await
 }
 
 #[tauri::command]
@@ -347,27 +283,7 @@ async fn get_month(
     year: i32,
     month: u32,
 ) -> Result<commands::MonthPayload, String> {
-    let tz = display_tz(&state.pool);
-    // Read once and passed to both, deliberately: `month_grid_start_ms` sizes
-    // the fetch window and `assemble_month` recomputes the same anchor, so two
-    // separate reads could straddle a settings change and leave the window
-    // short of the grid by up to six days.
-    let week_start = settings::read_settings(&state.pool).await.week_start;
-    let grid_start_ms = commands::month_grid_start_ms(year, month, &tz, week_start);
-    // Same widening as `get_week`/`get_day`, for the same reason: an event
-    // that begins just before the 42-day grid, or a DST-lengthened edge day,
-    // must not be missed.
-    const DAY: i64 = 24 * 3_600_000;
-    let events = omacal_store::events_in_window(
-        &state.pool,
-        grid_start_ms - DAY,
-        grid_start_ms + 43 * DAY,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(if settings::combine_identical_events(&state.pool).await {
-        commands::assemble_month_combining(&events, year, month, &tz, week_start, true)
-    } else { commands::assemble_month(&events, year, month, &tz, week_start) })
+    omacal_view::view::get_month(&state.pool, year, month).await
 }
 
 #[tauri::command]
@@ -375,22 +291,7 @@ async fn get_year(
     state: tauri::State<'_, AppState>,
     year: i32,
 ) -> Result<commands::YearPayload, String> {
-    let tz = display_tz(&state.pool);
-    let week_start = settings::read_settings(&state.pool).await.week_start;
-    let year_start_ms = commands::year_start_ms(year, &tz);
-    let next_year_start_ms = commands::year_start_ms(year + 1, &tz);
-    // Same widening as `get_week`/`get_day`/`get_month`, for the same reason:
-    // an event that begins just before the year, or a DST-lengthened edge
-    // day, must not be missed.
-    const DAY: i64 = 24 * 3_600_000;
-    let events = omacal_store::events_in_window(
-        &state.pool,
-        year_start_ms - DAY,
-        next_year_start_ms + DAY,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(commands::assemble_year(&events, year, now_ms(), &tz, week_start))
+    omacal_view::view::get_year(&state.pool, year).await
 }
 
 #[tauri::command]
@@ -398,35 +299,7 @@ async fn get_big_year(
     state: tauri::State<'_, AppState>,
     year: i32,
 ) -> Result<commands::BigYearPayload, String> {
-    let tz = display_tz(&state.pool);
-    let week_start = settings::read_settings(&state.pool).await.week_start;
-    get_big_year_impl(&state.pool, year, &tz, now_ms(), week_start).await
-}
-
-/// The body of `get_big_year`, minus the Tauri `State` wrapper so it is
-/// reachable from a test — same reasoning as `sign_in_impl`.
-async fn get_big_year_impl(
-    pool: &SqlitePool,
-    year: i32,
-    tz: &str,
-    now: i64,
-    week_start: settings::WeekStart,
-) -> Result<commands::BigYearPayload, String> {
-    let ribbon_start_ms = commands::big_year_start_ms(year, tz, week_start);
-    // Same widening as `get_week`/`get_day`/`get_month`/`get_year`, for the
-    // same reason: an event that begins just before the 392-day ribbon, or a
-    // DST-lengthened edge day, must not be missed.
-    const DAY: i64 = 24 * 3_600_000;
-    let events = omacal_store::events_in_window(
-        pool,
-        ribbon_start_ms - DAY,
-        ribbon_start_ms + 393 * DAY,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(if settings::combine_identical_events(pool).await {
-        commands::assemble_big_year_combining(&events, year, now, tz, week_start, true)
-    } else { commands::assemble_big_year(&events, year, now, tz, week_start) })
+    omacal_view::view::get_big_year(&state.pool, year).await
 }
 
 pub(crate) const KEYRING_SERVICE: &str = "omacal";
@@ -725,12 +598,7 @@ async fn upsert_calendar(
     Ok(())
 }
 
-pub(crate) fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
-}
+pub(crate) use omacal_view::now_ms;
 
 /// The message every Google-reaching command returns in demo mode, before any
 /// config or keyring I/O runs. The demo account (`fixtures::seed_demo`) is a
@@ -1040,11 +908,9 @@ mod today_of_month_tests {
     }
 }
 
-/// decisions ("what should I ask Google for?") must read one definition.
-pub(crate) fn synced_window(now_ms: i64) -> (i64, i64) {
-    const DAY: i64 = 24 * 3_600_000;
-    (now_ms - 180 * DAY, now_ms + 365 * DAY)
-}
+/// The fetch window a sync asks for; defined in `omacal-view` so the server
+/// reads the same one.
+pub(crate) use omacal_view::synced_window;
 
 /// Refreshes the access token and syncs every calendar of every account.
 ///
@@ -1890,15 +1756,15 @@ mod tests {
         let today = zoned.date();
         let monday = today.checked_sub(jiff::Span::new().days(i64::from(today.weekday().to_monday_zero_offset()))).unwrap();
         let ms = |d: jiff::civil::Date| d.to_zoned(jiff::tz::TimeZone::get(&tz).unwrap()).unwrap().timestamp().as_millisecond();
-        write("week", serde_json::to_value(get_days_impl(&pool, ms(monday), 7, 0).await.unwrap()).unwrap());
-        write("day", serde_json::to_value(get_days_impl(&pool, ms(today), 1, 0).await.unwrap()).unwrap());
+        write("week", serde_json::to_value(omacal_view::view::get_days(&pool, ms(monday), 7, 0).await.unwrap()).unwrap());
+        write("day", serde_json::to_value(omacal_view::view::get_days(&pool, ms(today), 1, 0).await.unwrap()).unwrap());
 
         let (year, month) = (i32::from(today.year()), today.month() as u32);
         let grid_start = commands::month_grid_start_ms(year, month, &tz, week_start);
         const DAY: i64 = 24 * 3_600_000;
         let events = omacal_store::events_in_window(&pool, grid_start - DAY, grid_start + 43 * DAY).await.unwrap();
         write("month", serde_json::to_value(commands::assemble_month(&events, year, month, &tz, week_start)).unwrap());
-        write("bigyear", serde_json::to_value(get_big_year_impl(&pool, year, &tz, now, week_start).await.unwrap()).unwrap());
+        write("bigyear", serde_json::to_value(omacal_view::view::get_big_year_impl(&pool, year, &tz, now, week_start).await.unwrap()).unwrap());
 
         write("calendars", serde_json::to_value(omacal_store::list_calendars(&pool).await.unwrap()).unwrap());
         // Writable, as a signed-in user's lists are: demo mode greys the boxes.
@@ -2185,11 +2051,11 @@ mod tests {
             SELECT id, 'copy', 'Design sync', ?1, ?2, 'UTC', 'UTC', 0 FROM calendars")
             .bind(now).bind(now + 60000).execute(&pool).await.unwrap();
         assert!(!settings::read_settings(&pool).await.combine_identical_events);
-        assert_eq!(get_days_impl(&pool, day, 1, 0).await.unwrap().days[0].events.len(), 2);
+        assert_eq!(omacal_view::view::get_days(&pool, day, 1, 0).await.unwrap().days[0].events.len(), 2);
         for (value, count) in [("1", 1), ("0", 2)] {
             settings::write(&pool, "combine_identical_events", value).await.unwrap();
             assert_eq!(settings::read_settings(&pool).await.combine_identical_events, value == "1");
-            let grid = get_days_impl(&pool, day, 1, 0).await.unwrap();
+            let grid = omacal_view::view::get_days(&pool, day, 1, 0).await.unwrap();
             assert_eq!(grid.days[0].events.len(), count);
             let feed = upcoming::current(&pool, now).await.unwrap();
             assert_eq!(feed.events.len(), count);
@@ -2205,7 +2071,7 @@ mod tests {
         assert_eq!(rows, 2, "combining must not write or delete either source");
         sqlx::query("UPDATE calendars SET selected = 0 WHERE google_id = 'home'").execute(&pool).await.unwrap();
         settings::write(&pool, "combine_identical_events", "1").await.unwrap();
-        let grid = get_days_impl(&pool, day, 1, 0).await.unwrap();
+        let grid = omacal_view::view::get_days(&pool, day, 1, 0).await.unwrap();
         assert!(grid.days[0].events[0].copies.is_empty(), "hidden calendars are not offered for editing");
     }
 

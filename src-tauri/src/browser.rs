@@ -178,18 +178,7 @@ fn launch(cmd: &mut Command) -> std::io::Result<()> {
     }
 }
 
-/// Every domain Zoom itself serves meetings from — the Rust twin of the
-/// widget's `ZOOM_HOSTS` in `MeetingPresence.mjs` (#119). `zoom.us` alone
-/// refused Zoom X, Telekom's German/EU Zoom, plus Zoom for Government and
-/// Zoom China; a meeting on any of them is the same numbered Zoom meeting,
-/// and `zoommtg://` takes the number, not the web host.
-pub(crate) const ZOOM_HOSTS: &[&str] = &["zoom.us", "zoom.com", "zoom-x.de", "zoomgov.com", "zoom.com.cn"];
-
-/// Whether `host` is Zoom or a subdomain of one of its domains.
-pub(crate) fn is_zoom_host(host: &str) -> bool {
-    let h = host.to_ascii_lowercase();
-    ZOOM_HOSTS.iter().any(|z| h == *z || h.ends_with(&format!(".{z}")))
-}
+pub(crate) use omacal_view::meeting::is_zoom_host;
 
 /// Opens one URI with the default handler, the AppImage's environment stripped
 /// from the launcher when this process runs out of one.

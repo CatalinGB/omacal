@@ -158,124 +158,7 @@ pub struct FeedEvent {
     pub calendar: Option<String>,
 }
 
-/// Zoom is not in this list: its domains live in `browser::ZOOM_HOSTS`, one
-/// place for the join rewrite and this scan both (#119).
-/// Teams is every cloud Microsoft publishes an endpoint list for: worldwide
-/// (`teams.microsoft.com`, the newer `teams.cloud.microsoft`), consumer
-/// (`teams.live.com`), GCC High and DoD (`gov.`/`dod.teams.microsoft.us`) and
-/// 21Vianet China (`teams.microsoftonline.cn`). `webexgov.us` is Webex for
-/// Government's own domain. The JS twin is `TEAMS_HOSTS` in
-/// `MeetingPresence.mjs`; keep the two in step.
-const MEETING_PROVIDERS: &[&str] = &[
-    "meet.google.com",
-    "teams.microsoft.com", "teams.cloud.microsoft", "teams.live.com",
-    "teams.microsoft.us", "teams.microsoftonline.cn",
-    "webex.com", "webexgov.us", "meet.jit.si",
-];
-
-/// Walks every URL in `text`, in order, and returns the first one whose host
-/// is a recognised meeting provider — the shared scan behind
-/// [`location_meeting_url`] and [`conference_join_url`]'s description half,
-/// and the Rust twin of `ui/src/lib/location.ts`'s `meetingUrl`.
-///
-/// The URL character class excludes whitespace, `,`, `;`, and — this is the
-/// part that matters over HTML — `<`, `>`, `"` and `'`. `description` is raw
-/// HTML from Google, sanitised later by `descriptionSegments`/`sanitize.ts`,
-/// and an ordinary invite anchor is `<a href="https://…/j/123?pwd=x">Join
-/// Zoom Meeting</a>`: without excluding the quote the scan runs straight
-/// through it into the tag's own text and returns `…pwd=x">Join`, a URL that
-/// looks plausible and 404s. `location` is plain text, where none of those
-/// characters occur anyway, so the same class serves both without a
-/// second implementation to keep in step.
-///
-/// Every match is tried, not just the first: a description that opens with
-/// an agenda link or a shared doc before the meeting link would otherwise
-/// scan that first, unrecognised URL and give up.
-///
-/// The scheme search is case-insensitive — matching the `i` flag on the TS
-/// twin's regex — and takes whichever scheme's match sits earlier in the
-/// text. `rest.find("https://").or_else(|| rest.find("http://"))` looks
-/// equivalent but is not: `.find` searches the whole remainder for each
-/// scheme independently, so a *later* `https://` still wins over an
-/// *earlier* `http://` whenever both are present, and the loop then advances
-/// past that later match — silently dropping the earlier URL for good
-/// rather than revisiting it next iteration.
-fn first_recognised_url(text: &str) -> Option<String> {
-    let mut rest = text;
-    loop {
-        let lower = rest.to_ascii_lowercase();
-        let at = match (lower.find("https://"), lower.find("http://")) {
-            (Some(a), Some(b)) => a.min(b),
-            (Some(a), None) => a,
-            (None, Some(b)) => b,
-            (None, None) => return None,
-        };
-        let tail = &rest[at..];
-        let end = tail
-            .find(|c: char| {
-                c.is_whitespace() || matches!(c, ',' | ';' | '<' | '>' | '"' | '\'')
-            })
-            .unwrap_or(tail.len());
-        let url = tail[..end].trim_end_matches([')', ',', '.', ';', ':', '!', '?', ']']);
-
-        // The hostname: after the scheme, before any path/query/fragment,
-        // with userinfo and port stripped — enough of a parse for an
-        // allow-list.
-        let host = url
-            .split_once("://")
-            .and_then(|(_, after_scheme)| after_scheme.split(['/', '?', '#']).next())
-            .map(|authority| {
-                authority
-                    .rsplit('@')
-                    .next()
-                    .unwrap_or("")
-                    .split(':')
-                    .next()
-                    .unwrap_or("")
-                    .to_ascii_lowercase()
-            })
-            .unwrap_or_default();
-
-        if !host.is_empty()
-            && (crate::browser::is_zoom_host(&host)
-                || MEETING_PROVIDERS.iter().any(|p| host == *p || host.ends_with(&format!(".{p}"))))
-        {
-            return Some(url.to_string());
-        }
-
-        // Not a recognised link (or not parseable) — keep scanning past it.
-        let consumed = at + end.max(1);
-        if consumed >= rest.len() {
-            return None;
-        }
-        rest = &rest[consumed..];
-    }
-}
-
-/// The joinable meeting URL a location field holds, or `None`.
-///
-/// **Recognised providers only**, which is the whole of the restraint: a
-/// location is as likely to hold a map pin or a venue's homepage as a
-/// meeting, and a Join button that opens a restaurant is worse than none.
-/// The trailing-punctuation trim matters more than it looks — a link
-/// written into a sentence ("dial in at https://…/j/123.") otherwise
-/// carries the full stop into the URL and 404s.
-pub(crate) fn location_meeting_url(raw: Option<&str>) -> Option<String> {
-    first_recognised_url(raw.unwrap_or("").trim())
-}
-
-/// The meeting to join, if any: a recognised link in `location`, and failing
-/// that, one in `description`.
-///
-/// Plenty of invites put their join link only in the description ("Join Zoom
-/// Meeting: https://…"), never in `location` — and this is the one place
-/// that answer is decided. `open_conference`, this feed, and the two
-/// `list`/`show` call sites in `cli.rs` all resolve through it, so the app,
-/// the widget and the CLI never disagree about whether an event has a
-/// meeting.
-pub(crate) fn conference_join_url(location: Option<&str>, description: Option<&str>) -> Option<String> {
-    location_meeting_url(location).or_else(|| first_recognised_url(description.unwrap_or("").trim()))
-}
+pub use omacal_view::meeting::conference_join_url;
 
 /// The pure assembly: stored rows in, feed out, no clock or filesystem.
 ///
@@ -572,6 +455,7 @@ fn visible_day_bounds(today: jiff::civil::Date, tz: &jiff::tz::TimeZone, start_h
 #[cfg(test)]
 mod tests {
     use super::*;
+    use omacal_view::meeting::{first_recognised_url, location_meeting_url};
     use omacal_store::{Attendee, Reminders};
 
     const HOUR: i64 = 3_600_000;
