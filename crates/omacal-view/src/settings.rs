@@ -1644,6 +1644,36 @@ pub async fn display_timezone(pool: &sqlx::SqlitePool) -> Option<String> {
     read(pool, DISPLAY_TZ_KEY).await
 }
 
+/// Every zone the picker may offer, straight from jiff's copy of the IANA
+/// database — the same authority `TimeZone::get` validates against, so the
+/// list and the validator cannot disagree.
+pub fn list_timezones() -> Vec<String> {
+    let mut zones: Vec<String> =
+        jiff::tz::db().available().map(|name| name.to_string()).collect();
+    zones.sort();
+    zones
+}
+
+/// The store half of the desktop's `set_display_timezone`: the zone is
+/// validated against jiff and written, or blanked back to the system zone.
+/// The desktop wrapper additionally writes its boot sidecar and restarts the
+/// app (both capture the zone at process start); a headless server has
+/// nothing to restart, so this is the write body alone.
+///
+/// Validation refuses rather than stores: a zone jiff does not know would
+/// come back at next launch as a `TZ` nothing honours, which is the system
+/// zone wearing the wrong label.
+pub async fn set_display_timezone(pool: &SqlitePool, tz: Option<&str>) -> Result<(), String> {
+    let tz = tz.map(str::trim).filter(|t| !t.is_empty());
+    if let Some(name) = tz {
+        jiff::tz::TimeZone::get(name)
+            .map_err(|_| format!("OmaCal does not know the time zone \"{name}\""))?;
+    }
+    write(pool, DISPLAY_TZ_KEY, tz.unwrap_or(""))
+        .await
+        .map_err(|e| crate::errors::user_facing(&e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

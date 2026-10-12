@@ -20,6 +20,7 @@ tokio = { version = "1.53.1", features = ["sync"] }
 jiff = "0.2.35"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite"] }
 uuid = { version = "1", features = ["v4"] }
+reqwest = { version = "0.12", features = ["rustls-tls-webpki-roots", "rustls-tls-native-roots"], default-features = false }
 omacal-core = { version = "0.1.0", path = "../omacal-core" }
 omacal-store = { version = "0.1.0", path = "../omacal-store" }
 omacal-sync = { version = "0.1.0", path = "../omacal-sync" }

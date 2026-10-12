@@ -54,10 +54,7 @@ pub async fn get_settings(state: tauri::State<'_, AppState>) -> Result<AppSettin
 /// list and the validator cannot disagree.
 #[tauri::command]
 pub fn list_timezones() -> Vec<String> {
-    let mut zones: Vec<String> =
-        jiff::tz::db().available().map(|name| name.to_string()).collect();
-    zones.sort();
-    zones
+    omacal_view::settings::list_timezones()
 }
 
 /// Stores the display zone and restarts the app to apply it — see
@@ -76,14 +73,9 @@ pub async fn set_display_timezone(
     tz: Option<String>,
 ) -> Result<(), String> {
     let tz = tz.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
-    if let Some(name) = tz.as_deref() {
-        jiff::tz::TimeZone::get(name)
-            .map_err(|_| format!("OmaCal does not know the time zone \"{name}\""))?;
-    }
-
-    write(&state.pool, DISPLAY_TZ_KEY, tz.as_deref().unwrap_or(""))
-        .await
-        .map_err(|e| crate::errors::user_facing(&e))?;
+    // Validation and the row write live in `omacal-view` (the server has no
+    // sidecar or restart); this keeps the desktop's boot sidecar and restart.
+    omacal_view::settings::set_display_timezone(&state.pool, tz.as_deref()).await?;
 
     use tauri::Manager;
     if let Ok(dir) = app.path().app_data_dir() {

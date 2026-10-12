@@ -25,11 +25,18 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use std::time::Duration;
 
-// The widget's location file and its parser moved to `omacal-view`, which the
-// settings read path needs without Tauri. Re-exported here so every
-// `weather::LOCATION_KEY` / `weather::parse_omarchy_location` call site is
-// unchanged; the fetch, cache and geocoding stay on this side.
-pub(crate) use omacal_view::weather::{parse_omarchy_location, LOCATION_KEY};
+// The widget's location file and parser, the geocoder's pure parsers and the
+// "set the place" write body all moved to `omacal-view`, which the settings
+// path (and the server) needs without Tauri. Re-exported here so every
+// `weather::…` call site is unchanged; the forecast fetch and cache stay on
+// this side.
+pub(crate) use omacal_view::weather::{
+    parse_omarchy_location, urlencoding_encode, LOCATION_KEY,
+};
+/// The geocoder's parsers are exercised by this module's tests; the write
+/// body itself lives in `omacal-view`.
+#[cfg(test)]
+pub(crate) use omacal_view::weather::parse_geocoded_place;
 
 /// Cached forecast JSON (our own compact shape, not Open-Meteo's).
 const CACHE_KEY: &str = "weather_cache";
@@ -284,15 +291,6 @@ pub(crate) fn parse_cached_coords(v: &str) -> Option<(f64, f64, Option<String>, 
     Some((lat, lon, (!name.is_empty()).then(|| name.to_string()), source))
 }
 
-/// The first hit of Open-Meteo's geocoder with the name it resolved to —
-/// what a place typed into Settings is stored as.
-pub(crate) fn parse_geocoded_place(raw: &str) -> Option<(f64, f64, String)> {
-    let v: serde_json::Value = serde_json::from_str(raw).ok()?;
-    let hit = v.get("results")?.get(0)?;
-    let name = hit.get("name")?.as_str()?.trim().to_string();
-    Some((hit.get("latitude")?.as_f64()?, hit.get("longitude")?.as_f64()?, name))
-}
-
 /// First hit of Open-Meteo's geocoder, for a widget location that has a name
 /// but no coordinates.
 pub(crate) fn parse_geocoding(raw: &str) -> Option<(f64, f64)> {
@@ -525,18 +523,6 @@ async fn resolve_location(
 /// Minimal percent-encoding for the one geocoding query parameter — a city
 /// name, not arbitrary data; a dependency for this would be a dependency
 /// for spaces.
-fn urlencoding_encode(s: &str) -> String {
-    s.chars()
-        .flat_map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~') {
-                vec![c.to_string()]
-            } else {
-                c.to_string().bytes().map(|b| format!("%{b:02X}")).collect()
-            }
-        })
-        .collect()
-}
-
 /// One fetch: resolve where, ask Open-Meteo, cache the report — and say so.
 /// Quiet on every failure — the header just keeps whatever it last knew.
 ///
@@ -631,38 +617,20 @@ pub(crate) async fn get_weather(
 /// Sets the place the forecast is for, from OmaCal's Settings (#117), or
 /// clears it back to the Omarchy bar's setting and then the connection.
 ///
-/// A typed name is looked up once, here, with Open-Meteo's geocoder, and
-/// stored as the name it resolved to with its coordinates — so a misspelled
-/// city is refused at the field, where it can be fixed, rather than
-/// silently leaving the forecast where it was.
+/// The geocode-and-store body lives in `omacal-view` (the server has no
+/// forecast loop but still offers the field); this keeps the one desktop
+/// side-effect, a refetch now rather than at the loop's next tick.
 #[tauri::command]
 pub(crate) async fn set_weather_location(
     app: tauri::AppHandle,
     state: tauri::State<'_, crate::AppState>,
     name: Option<String>,
 ) -> Result<crate::settings::AppSettings, String> {
-    let wanted = name.as_deref().map(str::trim).filter(|n| !n.is_empty());
-    let stored = match wanted {
-        None => String::new(),
-        Some(n) => {
-            let url = format!(
-                "https://geocoding-api.open-meteo.com/v1/search?name={}&count=1&language=en&format=json",
-                urlencoding_encode(n)
-            );
-            let raw = http_get(&url)
-                .await
-                .map_err(|_| "Could not look that place up — check the connection and try again.".to_string())?;
-            let (lat, lon, resolved) = parse_geocoded_place(&raw)
-                .ok_or_else(|| format!("No place called “{n}” was found. Try the city's name in English."))?;
-            serde_json::json!({ "name": resolved, "latitude": lat, "longitude": lon }).to_string()
-        }
-    };
-    crate::settings::write(&state.pool, LOCATION_KEY, &stored)
-        .await
-        .map_err(|e| crate::errors::user_facing(&e))?;
+    let settings =
+        omacal_view::weather::set_weather_location(&state.pool, name.as_deref()).await?;
     let enabled = crate::settings::weather_enabled(&state.pool).await;
     refresh_soon(app, state.pool.clone(), state.demo, enabled);
-    Ok(crate::settings::read_settings(&state.pool).await)
+    Ok(settings)
 }
 
 /// The last forecast fetched, as cached — the one thing the CLI and the
