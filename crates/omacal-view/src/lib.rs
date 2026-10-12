@@ -6,6 +6,7 @@
 
 pub mod auth;
 pub mod caldav_account;
+pub mod calendars;
 pub mod commands;
 pub mod combined;
 pub mod errors;

@@ -1,11 +1,12 @@
+//! The calendar-list commands. The store work lives in `omacal-view::calendars`;
+//! this keeps the commands, and the one desktop side-effect (the tray/menubar
+//! refresh a label change triggers).
+
 use crate::AppState;
-use omacal_store::CalendarRow;
 
 #[tauri::command]
-pub async fn get_calendars(state: tauri::State<'_, AppState>) -> Result<Vec<CalendarRow>, String> {
-    omacal_store::list_calendars(&state.pool)
-        .await
-        .map_err(|e| crate::errors::user_facing(&e))
+pub async fn get_calendars(state: tauri::State<'_, AppState>) -> Result<Vec<omacal_store::CalendarRow>, String> {
+    omacal_view::calendars::list(&state.pool).await
 }
 
 #[tauri::command]
@@ -14,42 +15,25 @@ pub async fn set_calendar_selected(
     id: i64,
     on: bool,
 ) -> Result<(), String> {
-    omacal_store::set_selected(&state.pool, id, on)
-        .await
-        .map_err(|e| crate::errors::user_facing(&e))
+    omacal_view::calendars::set_selected(&state.pool, id, on).await
 }
 
-/// Sets or clears a calendar's colour, **locally and only locally**.
-///
-/// `hex` of `None` clears the override and the calendar follows Google's own
-/// colour again — a different state from setting it to whatever Google happens
-/// to use today, which would silently stop following it.
-///
-/// **Nothing here reaches Google.** This is a display preference of this
-/// install's: the user's phone, the web UI, and anyone else subscribed to the
-/// same calendar are untouched. That is the whole reason it is a column beside
-/// Google's colour rather than a `calendarList.patch`.
 #[tauri::command]
 pub async fn set_calendar_color(
     state: tauri::State<'_, AppState>,
     id: i64,
     hex: Option<String>,
 ) -> Result<(), String> {
-    omacal_store::set_color_override(&state.pool, id, hex.as_deref())
-        .await
-        .map_err(|e| crate::errors::user_facing(&e))
+    omacal_view::calendars::set_color(&state.pool, id, hex.as_deref()).await
 }
 
-/// Returns how many events were removed, so the UI can say what happened.
 #[tauri::command]
 pub async fn set_calendar_sync(
     state: tauri::State<'_, AppState>,
     id: i64,
     on: bool,
 ) -> Result<u64, String> {
-    omacal_store::set_sync_enabled(&state.pool, id, on)
-        .await
-        .map_err(|e| crate::errors::user_facing(&e))
+    omacal_view::calendars::set_sync(&state.pool, id, on).await
 }
 
 #[tauri::command]
@@ -59,8 +43,7 @@ pub async fn set_calendar_label(
     id: i64,
     label: Option<String>,
 ) -> Result<(), String> {
-    omacal_store::set_label_override(&state.pool, id, label.as_deref())
-        .await.map_err(|e| crate::errors::user_facing(&e))?;
+    omacal_view::calendars::set_label(&state.pool, id, label.as_deref()).await?;
     crate::settings::refresh_menu_surfaces(&app, &state).await;
     Ok(())
 }
