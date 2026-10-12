@@ -10,6 +10,7 @@
 use serde::Serialize;
 
 use crate::AppState;
+pub(crate) use omacal_view::messages::{LIST_NAME_TAKEN, LIST_NEEDS_A_NAME, LIST_NAME_TOO_LONG, NOT_A_TASK_LIST, TASK_NOT_MOVED, TASK_ON_BOTH_LISTS, TASK_CHANGED_ON_SERVER, TASK_GONE, TASK_NEEDS_A_TITLE, TASK_REPEATS};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -144,8 +145,6 @@ async fn task_home(state: &AppState, calendar_id: i64) -> anyhow::Result<TaskHom
     Ok(TaskHome::Server(Box::new(client), collection_url))
 }
 
-pub(crate) const TASK_CHANGED_ON_SERVER: &str =
-    "That task changed on the server since it was loaded — sync and try again";
 
 #[tauri::command]
 pub async fn set_task_completed(
@@ -519,40 +518,6 @@ pub(crate) async fn list_body(state: &AppState) -> Vec<TaskVm> {
         .unwrap_or_default()
 }
 
-pub(crate) const TASK_NEEDS_A_TITLE: &str = "a task needs a title";
-/// A move that did not happen: the copy was refused, or the original would
-/// not come off its list and the copy was taken back.
-pub(crate) const TASK_NOT_MOVED: &str =
-    "The task could not be moved to that list — it is still on the old one.";
-/// A move that half happened, which the next sync would otherwise show as a
-/// second copy with no word of why. Worded as `events::MOVED_NOT_REMOVED` is,
-/// for the same situation.
-pub(crate) const TASK_ON_BOTH_LISTS: &str =
-    "The task is now on the list you chose, but OmaCal could not take it off the \
-     old one — it is on both. Delete the copy on the old list.";
-pub(crate) const TASK_GONE: &str = "that task is no longer here";
-/// A tick on a repeating task (#145). OmaCal can only complete the whole
-/// VTODO, and `STATUS:COMPLETED` on a series ends it for every client, so it
-/// refuses before writing and says where the tick can be made instead.
-pub(crate) const TASK_REPEATS: &str =
-    "This task repeats, and OmaCal cannot complete a single occurrence yet — \
-     completing it here would end the whole series, so nothing was changed. \
-     Tick it off in the app that made it.";
-/// `list_name`'s three refusals. Named so they can be allow-listed: each
-/// says what to do about a name the user just typed, and OPAQUE for a
-/// 61-character list name would report a sync fault for a typo.
-///
-/// **The collision one names the list**, and so is a `SAFE_PREFIXES` entry
-/// rather than an exact one: the trailing detail is a list name the user or
-/// their server chose, which is the "variable, benign" case that list is for.
-/// Naming it was deliberate — `lists_on_this_device_are_created_renamed_and_
-/// deleted` asserts the name appears — and two lists whose collision is with
-/// one the user cannot see is exactly when the name earns its place.
-pub(crate) const LIST_NEEDS_A_NAME: &str = "a list needs a name";
-pub(crate) const LIST_NAME_TOO_LONG: &str = "a list name can be up to 60 characters";
-pub(crate) const LIST_NAME_TAKEN: &str = "there is already a list called ";
-pub(crate) const NOT_A_TASK_LIST: &str =
-    "that is not a task list you can add to — `omacal tasks` names the lists in each row";
 
 /// `due_all_day` is `update_task`'s distinction: a date, or an hour on it.
 /// Left out, a due is a date — the add row's "by Friday" — and a list's own

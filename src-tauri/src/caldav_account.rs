@@ -13,7 +13,7 @@ use omacal_view::CredentialStore;
 
 // Shared with the sync engine; re-exported so `crate::caldav_account::…`
 // paths are unchanged.
-pub(crate) use omacal_view::caldav_account::{credential_key, CALENDAR_IS_READ_ONLY};
+pub(crate) use omacal_view::caldav_account::credential_key;
 
 /// What `connect_caldav` needs to know about the kind of server it is
 /// talking to. "icloud" is a UI nicety, not a protocol difference: it fixes

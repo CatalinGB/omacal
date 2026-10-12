@@ -1,5 +1,6 @@
 use crate::AppState;
 use sqlx::SqlitePool;
+pub(crate) use omacal_view::messages::{CREATED_NOT_STORED, SAVED_NOT_STORED, CONFLICT_GUESTS, MOVE_ONE_OCCURRENCE, MOVE_ACROSS_ACCOUNTS, MOVED_NOT_REMOVED};
 
 #[derive(Debug, serde::Serialize)]
 pub struct EventDetail {
@@ -471,14 +472,6 @@ pub(crate) fn attendees_for_edit(
     out
 }
 
-/// What the user is told when a guest-list change loses a race.
-///
-/// A named constant because it is asserted in two places that must not drift:
-/// the test that pins it, and `errors.rs`'s `SAFE_EXACT` allowlist, which shows
-/// a message verbatim only if it matches one there exactly.
-pub(crate) const CONFLICT_GUESTS: &str =
-    "somebody else changed this event while you were editing it, so the guest list was not \
-     saved — close the form, let it refresh, and make the change again";
 
 /// Which Google event id an RSVP write targets.
 #[derive(Debug, PartialEq)]
@@ -1129,41 +1122,8 @@ async fn create_via_client(
     }
 }
 
-/// What a create reports when Google succeeded and the local half did not.
-///
-/// A fixed literal, safelisted verbatim in `errors.rs`: the one thing this
-/// message must never do is look like a failed create, because the natural
-/// answer to a failed create is to try again — and trying again mails every
-/// guest a second invitation. `App.svelte` recognises the sentence and runs
-/// its ordinary post-write sync instead of stopping, which is the heal the
-/// sentence promises.
-pub(crate) const CREATED_NOT_STORED: &str =
-    "The event was created on Google, but OmaCal could not record it locally. \
-     The next sync will bring it in — do not create it again.";
 
-/// What an edit, move or delete reports when the server took it and the local
-/// half did not (a CalDAV resync after the write failed).
-///
-/// [`CREATED_NOT_STORED`]'s rule for changes: a fixed literal, safelisted
-/// verbatim in `errors.rs`, because reported as an ordinary failure it reads
-/// as a refusal, and the app undoes on screen a change that happened. The UI
-/// recognises it, keeps the change drawn, and the next sync brings it in.
-pub(crate) const SAVED_NOT_STORED: &str =
-    "The change was saved, but OmaCal could not record it locally. \
-     The next sync will bring it in.";
 
-/// What a CalDAV move reports when the copy landed and the original would not
-/// go — the one partial outcome the PUT-then-DELETE order can produce.
-///
-/// [`CREATED_NOT_STORED`]'s reasoning, for the other write: the thing this
-/// message must never do is read as a failed move, because the answer to a
-/// failed move is to try it again, and trying again puts a second copy
-/// nowhere useful. It says where both copies are and which one to delete,
-/// because that is a thing a person can actually do. Safelisted verbatim in
-/// `errors.rs`; the underlying transport error goes to the log.
-pub(crate) const MOVED_NOT_REMOVED: &str =
-    "The event is now on the calendar you chose, but omacal could not remove it \
-     from the old one — it is on both. Delete the copy on the old calendar.";
 
 /// Which timezone an edit puts on both sides of its diff.
 ///
@@ -1681,26 +1641,7 @@ async fn update_impl(
     event_detail_impl(state, id).await
 }
 
-/// What a move earns when the event is one occurrence of a series.
-///
-/// Google's `events.move` takes an event id, and for a recurring event that is
-/// the master: there is no request that re-files one occurrence and leaves its
-/// siblings behind, and CalDAV is the same — the whole `VCALENDAR` resource is
-/// one file in one collection. So this refuses rather than quietly moving more
-/// than was asked for. Allowlisted in `errors.rs`: the user can act on it, and
-/// the action is the scope choice already on screen.
-pub(crate) const MOVE_ONE_OCCURRENCE: &str =
-    "one occurrence cannot be moved on its own — choose All events to move the whole series";
 
-/// What a move earns when the destination belongs to another account.
-///
-/// Not a limitation to be lifted later: across accounts there is no move, only
-/// a copy and a delete. The event would take a new id, every guest would be
-/// invited afresh, and every RSVP already given would be discarded — the exact
-/// outcome that made "delete it and make it again" the workaround this feature
-/// exists to remove. Refused with the reason rather than performed silently.
-pub(crate) const MOVE_ACROSS_ACCOUNTS: &str =
-    "an event can only be moved between calendars on the same account";
 
 /// Which calendar this save should re-file the event onto, or `None` for none.
 ///

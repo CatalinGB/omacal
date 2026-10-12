@@ -54,6 +54,7 @@ mod write;
 
 use sqlx::SqlitePool;
 use tauri::Manager;
+pub(crate) use omacal_view::messages::{BROWSER_FAILED};
 
 // `CachedTokens` and `AppState` now live in `omacal-view`, shared with the web
 // server. Re-exported so every `crate::AppState` path is unchanged.
@@ -395,12 +396,6 @@ fn forget_stale_credentials(
     reauth.remove(email);
 }
 
-/// What the user reads when no browser could be started. Fixed literal, in
-/// `errors::SAFE_EXACT`: a launcher failure carries no secret, and the
-/// opaque fallback is what cost issue #1's reporter their afternoon — the
-/// one fact that pointed at the cause was the one thing withheld.
-pub(crate) const BROWSER_FAILED: &str =
-    "Could not open a browser. Open your browser once and try again.";
 
 /// The body of `sign_in`, minus the Tauri `State` wrapper so it is reachable
 /// from a test. The demo gate is the first statement for the same reason it is

@@ -16,6 +16,7 @@
 
 use omacal_caldav::{EventWrite, WriteTime};
 use omacal_store::StoredEvent;
+pub(crate) use omacal_view::messages::{EXPORT_FAILED, EXPORT_DISMISSED, EXPORT_GONE};
 
 /// What an exported file is called, before the user renames it.
 ///
@@ -174,18 +175,8 @@ pub(crate) async fn export_event(
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
-/// The chooser went away without answering — a shape that should not happen,
-/// and one the user can act on if it does.
-pub(crate) const EXPORT_DISMISSED: &str = "The file chooser closed without an answer.";
 
-/// The row went out from under the click — a sync landed between opening the
-/// details card and pressing Export.
-pub(crate) const EXPORT_GONE: &str = "That event is no longer here.";
 
-/// A fixed literal, in `errors::SAFE_EXACT`: a failed write must not put a
-/// filesystem path or an OS error into a message the user reads.
-pub(crate) const EXPORT_FAILED: &str =
-    "Could not write that file. Check the folder and try again.";
 
 #[cfg(test)]
 mod tests {
