@@ -5,6 +5,7 @@
 //! may reach for `tauri`.
 
 pub mod auth;
+pub mod caldav_account;
 pub mod commands;
 pub mod combined;
 /// Test-only: the golden-file mechanism the UI fixtures read. Gated so nothing
@@ -14,7 +15,9 @@ pub mod golden;
 pub mod meeting;
 pub mod settings;
 pub mod state;
+pub mod sync;
 pub mod view;
+pub mod webcal;
 pub mod write;
 
 pub use state::{AppState, CachedTokens, CredentialStore, EventSink, UpdateNotice};

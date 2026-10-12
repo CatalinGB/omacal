@@ -8,8 +8,6 @@
 //! every write path already refuses, the same `sync_enabled` unsubscribe
 //! semantics, the same `https_or_private` refusal for cleartext off-LAN.
 
-use sqlx::SqlitePool;
-
 use crate::AppState;
 
 /// Subscribes to a public WebCal feed: normalizes + validates the URL, proves it
@@ -68,59 +66,6 @@ fn user_facing_feed(e: omacal_sync::webcal_feed::WebcalFeedError) -> String {
         omacal_sync::webcal_feed::WebcalFeedError::Http(status) => crate::errors::server_answered(status),
         omacal_sync::webcal_feed::WebcalFeedError::Other(e) => crate::errors::user_facing(&e),
     }
-}
-
-/// Syncs every enabled calendar of one subscribed-feeds account. One bad feed
-/// never stops the others — the same per-calendar isolation Google gets.
-///
-/// Takes no window: a feed arrives whole, so there is no slice to ask for.
-/// No `dead`/reauth concept: feeds hold no credentials, so every failure is
-/// a plain `failed` label, never a reconnect banner.
-pub(crate) async fn sync_account(pool: &SqlitePool, account_id: i64) -> (u64, Vec<String>) {
-    let account_name: String = sqlx::query_scalar("SELECT email FROM accounts WHERE id = ?1")
-        .bind(account_id)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten()
-        .flatten()
-        .unwrap_or_else(|| format!("webcal:{account_id}"));
-    let cals: Vec<(i64, String)> = sqlx::query_as(
-        "SELECT id, google_id FROM calendars WHERE account_id = ?1 AND sync_enabled = 1 ORDER BY id",
-    )
-    .bind(account_id)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-
-    let mut total = 0u64;
-    let mut failed = Vec::new();
-    for (cal_id, feed_url) in cals {
-        match omacal_sync::webcal_feed::sync_webcal_calendar(pool, cal_id, &feed_url)
-            .await
-        {
-            Ok(out) => total += (out.upserted + out.deleted) as u64,
-            Err(e) => {
-                // **The host and the row id, never the address.** For a
-                // subscription the URL is frequently the credential itself —
-                // a private calendar's "secret address in iCal format" grants
-                // read access to anyone holding it — and the failure message
-                // the user reads says "see the application log", which is how
-                // that address would end up pasted into a bug report. Google
-                // logs a calendar id and CalDAV an email; neither is a secret.
-                // The host still says which subscription it was. `%e` is safe:
-                // `fetch_feed` strips the URL out of every transport error.
-                let host = omacal_sync::webcal_feed::default_name_for(&feed_url);
-                tracing::warn!(account = %account_name, calendar_id = cal_id, %host, %e,
-                               "subscribed feed sync failed");
-                // Counted, not shown, today (`sync_result` reads `.len()`) — but
-                // a label that is the credential would become a leak the day
-                // these are displayed, so it carries the host as well.
-                failed.push(format!("{account_name} / {host}"));
-            }
-        }
-    }
-    (total, failed)
 }
 
 /// Test seam for the name fallback (kept free of Tauri state).

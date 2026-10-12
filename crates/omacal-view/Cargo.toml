@@ -24,3 +24,4 @@ omacal-core = { version = "0.1.0", path = "../omacal-core" }
 omacal-store = { version = "0.1.0", path = "../omacal-store" }
 omacal-sync = { version = "0.1.0", path = "../omacal-sync" }
 omacal-google = { version = "0.1.0", path = "../omacal-google" }
+omacal-caldav = { version = "0.1.0", path = "../omacal-caldav" }

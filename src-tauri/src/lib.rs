@@ -236,10 +236,14 @@ async fn get_big_year(
 
 pub(crate) const KEYRING_SERVICE: &str = "omacal";
 
-/// Google's Calendar API root. A constant so the one place that overrides it —
-/// a test pointing `sync_accounts` at a local mock — is the only place a
-/// different value can come from.
-const GOOGLE_CALENDAR_API: &str = "https://www.googleapis.com/calendar/v3";
+/// The sync engine, and its Google API root, now live in `omacal-view::sync`;
+/// re-exported so `crate::GOOGLE_CALENDAR_API` is unchanged. The rest are
+/// reached only by the desktop's tests, so they are re-exported test-only.
+pub(crate) use omacal_view::sync::GOOGLE_CALENDAR_API;
+#[cfg(test)]
+pub(crate) use omacal_view::sync::{
+    accounts_to_attempt, calendars_to_sync, refresh_calendar_names, sync_accounts, sync_result,
+};
 
 #[derive(serde::Deserialize)]
 struct Config {
@@ -605,182 +609,6 @@ pub(crate) async fn access_token_for(state: &AppState, cfg: &Config, email: &str
     .await
 }
 
-/// The calendars a sync should fetch for one account.
-///
-/// `sync_enabled`, deliberately — not `selected`. Hiding a calendar in the UI
-/// must not stop it syncing, or re-showing it would reveal a gap until the
-/// next full sync.
-///
-/// `ORDER BY id` for the same reason `sync_all` orders its accounts: without
-/// it, which calendar is fetched first is whatever the query planner's chosen
-/// index happens to yield, and that decided whose failure was visible.
-pub(crate) async fn calendars_to_sync(
-    pool: &SqlitePool,
-    account_id: i64,
-) -> anyhow::Result<Vec<(i64, String)>> {
-    let cals = sqlx::query_as(
-        "SELECT id, google_id FROM calendars
-         WHERE account_id = ?1 AND sync_enabled = 1
-         ORDER BY id",
-    )
-    .bind(account_id)
-    .fetch_all(pool)
-    .await?;
-    Ok(cals)
-}
-
-/// Syncs every calendar of every account, isolating failures.
-///
-/// The token source is injected so this is reachable from a test: the real one
-/// reads the Keychain and talks to Google, neither of which belongs in a test,
-/// and the property worth proving is precisely what happens when it fails.
-///
-/// Nothing here uses `?`. Before multi-account, "this account failed" and "the
-/// sync failed" were the same sentence and a `?` was the honest spelling of
-/// both. They are different sentences now: one account with revoked consent
-/// answers `invalid_grant` on every refresh forever, and a shared calendar
-/// unshared behind our back answers 403 or 404 forever — neither is a reason to
-/// stop syncing anything else.
-///
-/// Returns the rows written, a label per failed account or calendar, and the
-/// accounts whose refresh token is dead for good. The labels are for the log;
-/// the caller turns their *count* into the user-facing failure, because an
-/// email address has no business being handed to a user-facing string.
-///
-/// Dead tokens are their own list, not entries in `failed`: a transient
-/// failure's story is "it will keep trying", and for a dead grant that story
-/// is false — retrying is quota spent on an answer that cannot change. The
-/// caller marks these accounts, sync stops touching them, and the UI offers
-/// the only fix there is (sign in again). Their emails *are* shown to the
-/// user, which is fine on this path: it is the user's own account list, in
-/// the status payload — not an error string crossing `errors::user_facing`.
-async fn sync_accounts<F, Fut>(
-    pool: &SqlitePool,
-    accounts: &[(i64, String)],
-    api_base: &str,
-    window_start_ms: i64,
-    window_end_ms: i64,
-    token_for: F,
-) -> (u64, Vec<String>, Vec<String>)
-where
-    F: Fn(String) -> Fut,
-    Fut: std::future::Future<Output = anyhow::Result<String>>,
-{
-    let mut total = 0u64;
-    let mut failed: Vec<String> = Vec::new();
-    let mut dead: Vec<String> = Vec::new();
-
-    for (account_id, email) in accounts {
-        // `%e`, never the token: `Tokens` has a hand-written redacting `Debug`
-        // and no credential is interpolated anywhere on this path.
-        let access_token = match token_for(email.clone()).await {
-            Ok(t) => t,
-            Err(e) if omacal_google::auth::needs_reauth(&e) => {
-                tracing::warn!(account = %email, %e,
-                    "refresh token is dead; the account needs to be reconnected");
-                dead.push(email.clone());
-                continue;
-            }
-            Err(e) => {
-                tracing::warn!(account = %email, %e, "no usable access token; skipping this account");
-                failed.push(email.clone());
-                continue;
-            }
-        };
-
-        let client = omacal_google::CalendarClient::new(api_base, &access_token);
-        // Names can change without reconnecting an account. Update only known
-        // calendars: this must not import or re-enable calendars during sync.
-        if let Err(e) = refresh_calendar_names(pool, *account_id, &client).await {
-            tracing::warn!(%e, "could not refresh calendar names; keeping cached names");
-        }
-
-        let cals = match calendars_to_sync(pool, *account_id).await {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!(account = %email, %e, "could not list calendars; skipping this account");
-                failed.push(email.clone());
-                continue;
-            }
-        };
-
-        for (cal_id, google_id) in cals {
-            match omacal_sync::sync_calendar(
-                pool, &client, cal_id, &google_id, window_start_ms, window_end_ms,
-            )
-            .await
-            {
-                Ok(out) => total += (out.upserted + out.deleted) as u64,
-                Err(e) => {
-                    tracing::warn!(account = %email, calendar = %google_id, %e, "calendar sync failed");
-                    failed.push(format!("{email} / {google_id}"));
-                }
-            }
-        }
-    }
-
-    (total, failed, dead)
-}
-
-async fn refresh_calendar_names(
-    pool: &SqlitePool, account_id: i64, client: &omacal_google::CalendarClient,
-) -> anyhow::Result<()> {
-    let calendars = client.list_calendars().await?;
-    let mut names = Vec::new();
-    for c in calendars {
-        let mut name = c.display_name().to_string();
-        if name == c.id && c.primary && c.summary_override.as_deref().is_none_or(|s| s.trim().is_empty()) {
-            if let Ok(title) = client.calendar_title(&c.id).await {
-                if !title.trim().is_empty() { name = title; }
-            }
-        }
-        names.push((c.id, name));
-    }
-    let mut tx = pool.begin().await?;
-    for (id, name) in names {
-        sqlx::query("UPDATE calendars SET summary = ?3 WHERE account_id = ?1 AND google_id = ?2")
-            .bind(account_id).bind(id).bind(name)
-            .execute(&mut *tx).await?;
-    }
-    tx.commit().await?;
-    Ok(())
-}
-
-/// The accounts a sync should even attempt: everyone not marked as needing
-/// re-consent. A marked account's refresh is a request whose answer is
-/// already known — `invalid_grant` does not get better with retrying — spent
-/// from a shared quota and logged as a fresh warning every five minutes. The
-/// account rejoins the rotation when a sign-in clears its mark.
-fn accounts_to_attempt(
-    accounts: Vec<(i64, String)>,
-    marked: &std::collections::BTreeSet<String>,
-) -> Vec<(i64, String)> {
-    accounts.into_iter().filter(|(_, email)| !marked.contains(email)).collect()
-}
-
-/// Turns what a sync managed to do into what it reports.
-///
-/// The whole point of isolating failures is that they still get *reported*.
-/// Drop this decision and a sync in which every account failed returns `Ok`:
-/// `record_sync` runs, the header reads "Synced just now", and no `sync-failed`
-/// event ever fires. That is strictly worse than the `?` this replaced — the
-/// `?` at least stopped loudly, whereas silent isolation fails forever without
-/// telling anyone.
-///
-/// A count, never the labels. This string is what `errors::user_facing` sees,
-/// and the labels are account email addresses; the detail is already in the
-/// log, at the level the rest of this file uses. Partial success is still
-/// failure: rows written by the accounts that worked do not make the account
-/// that did not any less stale.
-///
-/// A separate function so the decision can be asserted directly — `sync_all`
-/// itself is not reachable from a test, because it reads the real config file.
-fn sync_result(total: u64, failed: &[String]) -> anyhow::Result<u64> {
-    if !failed.is_empty() {
-        anyhow::bail!("{} of this sync's targets failed; see the log", failed.len());
-    }
-    Ok(total)
-}
 
 /// The window the app keeps synced.
 ///
@@ -829,101 +657,15 @@ mod today_of_month_tests {
 /// reads the same one.
 pub(crate) use omacal_view::synced_window;
 
-/// Refreshes the access token and syncs every calendar of every account.
-///
-/// Pure sync work, with no demo check and no status bookkeeping of its own —
-/// shared by the `sync_now` command and the background loop (Task 4), each of
-/// which handles the demo gate and `record_sync` itself.
+/// Desktop wrapper over `omacal-view::sync::sync_all`, injecting the keyring
+/// store and the Google client pair from the config file. Called by `sync_now`
+/// and the background sync loop.
 pub(crate) async fn sync_all(state: &AppState) -> anyhow::Result<u64> {
-    let pool = &state.pool;
-    // `ORDER BY id`, so which account goes first is a decision rather than
-    // whatever rowid order happens to be — it used to decide whose failure
-    // stopped the rest.
-    // (id, email, provider, server_url, username)
-    type AccountRow = (i64, String, String, Option<String>, Option<String>);
-    let all: Vec<AccountRow> = sqlx::query_as(
-        "SELECT id, email, provider, server_url, username FROM accounts ORDER BY id",
-    )
-    .fetch_all(pool)
-    .await?;
-
-    let marked = state.reauth.lock().expect("reauth mark poisoned").clone();
-    let google: Vec<(i64, String)> = all
-        .iter()
-        .filter(|(_, _, p, _, _)| p == "google")
-        .map(|(id, email, _, _, _)| (*id, email.clone()))
-        .collect();
-    let google = accounts_to_attempt(google, &marked);
-
-    let now = now_ms();
-    let (window_start, window_end) = synced_window(now);
-
-    let mut total = 0u64;
-    let mut failed: Vec<String> = Vec::new();
-    let mut dead: Vec<String> = Vec::new();
-
-    // `load_config` moved inside the Google branch: a CalDAV-only install
-    // has no Google client pair anywhere and must not need one to sync.
-    if !google.is_empty() {
+    omacal_view::sync::sync_all(state, &KeyringStore, || {
         let cfg = load_config()?;
-        let cfg = &cfg;
-        let (t, f, d) = sync_accounts(
-            pool,
-            &google,
-            GOOGLE_CALENDAR_API,
-            window_start,
-            window_end,
-            move |email| async move { access_token_for(state, cfg, &email).await },
-        )
-        .await;
-        total += t;
-        failed.extend(f);
-        dead.extend(d);
-    }
-
-    for (account_id, _, _, _, _) in all.iter().filter(|(_, _, p, _, _)| p == "webcal") {
-        let (t, f) =
-            webcal_subscription::sync_account(pool, *account_id).await;
-        total += t;
-        failed.extend(f);
-    }
-
-    for (account_id, email, _, server_url, username) in
-        all.iter().filter(|(_, _, p, _, _)| p == "caldav")
-    {
-        if marked.contains(email) {
-            continue; // dead credentials; the banner is already up
-        }
-        let client =
-            match caldav_account::client_for(email, server_url.as_deref(), username.as_deref()) {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::warn!(account = %email, %e, "no usable CalDAV credentials");
-                    failed.push(email.clone());
-                    continue;
-                }
-            };
-        match caldav_account::sync_account(pool, *account_id, &client, window_start, window_end)
-            .await
-        {
-            Ok(n) => total += n,
-            Err(e) if e.needs_reauth() => {
-                tracing::warn!(account = %email,
-                    "the CalDAV password was rejected; the account needs to be reconnected");
-                dead.push(email.clone());
-            }
-            Err(e) => {
-                tracing::warn!(account = %email, %e, "CalDAV sync failed");
-                failed.push(email.clone());
-            }
-        }
-    }
-
-    if !dead.is_empty() {
-        state.reauth.lock().expect("reauth mark poisoned").extend(dead);
-    }
-
-    sync_result(total, &failed)
+        Ok((cfg.client_id, cfg.client_secret))
+    })
+    .await
 }
 
 /// Refreshes the access token and syncs every calendar of every account.
