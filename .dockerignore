@@ -10,3 +10,17 @@ packaging
 skills
 scripts
 *.md
+
+# The build context is the repo; secrets and databases must never enter it (and
+# therefore the image). The live copies live in the `/data` volume, not here.
+credentials.json
+**/credentials.json
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.db-journal
+.env

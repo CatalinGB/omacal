@@ -1,9 +1,31 @@
+# OmaCal served from the Radicale box (192.168.1.200) over Tailscale.
+#
+# `up -d --build` builds `Dockerfile` and starts it. The published port is only
+# reachable inside the tailnet once `tailscale up` has run on the host — no
+# router port-forward, no public exposure.
+#
+#   sudo tailscale up            # join the box to your tailnet
+#   docker compose up -d --build
+#
+# Then browse from the phone (also on the tailnet) to:
+#
+#   http://<tailnet-name>:8080   # e.g. http://radicale-box:8080
+#
+# `<tailnet-name>` is the box's magic-DNS name: `tailscale status` lists it.
 services:
   omacal:
-    build: .
-    image: omacal-web
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: omacal-web:latest
     ports:
       - "8080:8080"
+    environment:
+      TZ: Europe/Bucharest
+      # Bind all interfaces *inside* the container so the published port works.
+      OMACAL_BIND: 0.0.0.0:8080
+      # The named volume below mounts here; the DB and credential live under it.
+      XDG_DATA_HOME: /data
     volumes:
       - omacal-data:/data
     restart: unless-stopped

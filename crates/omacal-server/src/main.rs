@@ -1,9 +1,13 @@
 //! Boot: resolve the data dir, open the same database the desktop uses, seed
 //! the credential store, start the sync ticker and serve the routes.
 //!
-//! A one-shot `set-credential <key>` reads a secret from stdin and writes it to
-//! the credential file without printing it — the import path the scoping doc
-//! asks for.
+//! Two one-shot subcommands run before any of that:
+//! - `set-credential <key>` reads a secret from stdin and writes it to the
+//!   credential file without printing it — the import path the scoping doc
+//!   asks for.
+//! - `healthcheck` probes the local `/healthz` and exits 0/1. The distroless
+//!   image has no shell or curl, so the Dockerfile's `HEALTHCHECK` uses this
+//!   exec-form subcommand instead.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -16,6 +20,13 @@ use omacal_view::CredentialStore;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // The health probe is a connected client, not the server: run it before
+    // the tracing subscriber (nothing is logged on the success path), before
+    // the data dir is touched, and before any port is bound.
+    if is_healthcheck() {
+        std::process::exit(healthcheck_exit_code());
+    }
+
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
@@ -97,6 +108,83 @@ fn set_credential_key() -> Option<String> {
     }
 }
 
+/// `true` when invoked as `omacal-server healthcheck`.
+fn is_healthcheck() -> bool {
+    matches!(std::env::args().nth(1).as_deref(), Some("healthcheck"))
+}
+
+/// `0` when the local `/healthz` answers 200, `1` otherwise. Any failure is
+/// written to stderr (Docker surfaces a healthcheck's output in `inspect`).
+fn healthcheck_exit_code() -> i32 {
+    match probe_healthz() {
+        Ok(()) => 0,
+        Err(err) => {
+            eprintln!("healthcheck failed: {err:#}");
+            1
+        }
+    }
+}
+
+/// One `GET /healthz` over a raw TCP socket: the container has no HTTP client
+/// crate, and the probe only needs the status line.
+fn probe_healthz() -> Result<()> {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{TcpStream, ToSocketAddrs};
+    use std::time::Duration;
+
+    let target = healthcheck_target();
+    let timeout = Duration::from_secs(3);
+    let addr = target
+        .to_socket_addrs()
+        .with_context(|| format!("could not resolve {target}"))?
+        .next()
+        .with_context(|| format!("no address for {target}"))?;
+
+    let mut stream = TcpStream::connect_timeout(&addr, timeout)
+        .with_context(|| format!("could not connect to {target}"))?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+
+    // HTTP/1.0 with `Connection: close`: the body is not read, and there is no
+    // chunked framing to trip over.
+    write!(
+        stream,
+        "GET /healthz HTTP/1.0\r\nHost: {target}\r\nConnection: close\r\n\r\n"
+    )?;
+    stream.flush()?;
+
+    let mut status = String::new();
+    BufReader::new(stream).read_line(&mut status)?;
+    // "HTTP/1.1 200 OK" → "200".
+    match status.split_whitespace().nth(1) {
+        Some("200") => Ok(()),
+        _ => anyhow::bail!("unexpected status line: {}", status.trim()),
+    }
+}
+
+/// The address to probe: the port from `OMACAL_BIND`, with a wildcard or empty
+/// host swapped for loopback. The default matches the server's own default.
+fn healthcheck_target() -> String {
+    let bind = std::env::var("OMACAL_BIND").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
+    probe_address(&bind).to_string()
+}
+
+/// `bind` → the loopback address a same-host client can reach it on.
+fn probe_address(bind: &str) -> String {
+    let (host, port) = bind.rsplit_once(':').unwrap_or(("0.0.0.0", "8080"));
+    let host = host.trim_matches(['[', ']']);
+    let host = if host.is_empty() || host == "0.0.0.0" || host == "::" {
+        "127.0.0.1"
+    } else {
+        host
+    };
+    if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
 /// Reads one secret from stdin and stores it, printing only the key.
 fn import_credential(data_dir: &Path, key: &str) -> Result<()> {
     use std::io::Read;
@@ -139,4 +227,26 @@ fn data_dir() -> Option<PathBuf> {
             .or_else(|| home().map(|h| h.join(".local/share")))?
             .join("com.omacal.app"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::probe_address;
+
+    #[test]
+    fn a_wildcard_bind_probes_loopback_on_the_same_port() {
+        assert_eq!(probe_address("0.0.0.0:8080"), "127.0.0.1:8080");
+        assert_eq!(probe_address("[::]:8080"), "127.0.0.1:8080");
+    }
+
+    #[test]
+    fn an_explicit_host_is_probed_as_written() {
+        assert_eq!(probe_address("127.0.0.1:8090"), "127.0.0.1:8090");
+        assert_eq!(probe_address("192.168.1.200:8080"), "192.168.1.200:8080");
+    }
+
+    #[test]
+    fn a_missing_host_defaults_to_loopback_and_the_default_port() {
+        assert_eq!(probe_address(":8080"), "127.0.0.1:8080");
+    }
 }
