@@ -3,8 +3,7 @@
 // a raw `TypeError`. This module installs the surface Tauri's own
 // `@tauri-apps/api/mocks` installs, but wired to `omacal-server`'s HTTP routes
 // rather than a mock callback: `invoke` becomes a POST to `/api/<cmd>`, and
-// `listen` is intercepted locally (server-pushed events arrive over a WebSocket
-// in a later task).
+// `listen` is intercepted locally, fed by the server's `/ws` channel.
 //
 // It is imported only when the build sets `VITE_TARGET=web`:
 //
@@ -61,6 +60,39 @@ function removeListener(event: string, eventId: number): void {
   if (index !== -1) registered.splice(index, 1);
 }
 
+/**
+ * The server's event channel. `listen` is intercepted locally, so the events
+ * the desktop would receive through Tauri arrive here as
+ * `{ event, payload }` frames; each is dispatched into the registered
+ * callbacks. Reconnects on close, because the page outlives a server restart.
+ */
+function connectEvents(): void {
+  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  const socket = new WebSocket(`${protocol}//${location.host}/ws`);
+
+  socket.onmessage = (message) => {
+    let frame: { event?: string; payload?: unknown };
+    try {
+      frame = JSON.parse(String(message.data));
+    } catch {
+      return;
+    }
+    if (typeof frame.event !== "string") return;
+    for (const id of listeners.get(frame.event) ?? []) {
+      runCallback(id, { event: frame.event, id, payload: frame.payload });
+    }
+  };
+
+  socket.onclose = () => {
+    // A dropped connection is normal (server restart, sleep). Retry, so a page
+    // left open keeps receiving syncs.
+    setTimeout(connectEvents, 1000);
+  };
+  socket.onerror = () => {
+    socket.close();
+  };
+}
+
 async function invoke(cmd: string, args?: InvokeArgs): Promise<unknown> {
   if (cmd === "plugin:event|listen") {
     const { event, handler } = (args ?? {}) as { event: string; handler: number };
@@ -107,6 +139,8 @@ export function installWebShim(): void {
       removeListener(event, eventId);
     },
   };
+
+  connectEvents();
 }
 
 installWebShim();

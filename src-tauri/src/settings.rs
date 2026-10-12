@@ -287,7 +287,7 @@ mod tests {
         assert_eq!(read_settings(&p).await.sync_interval_ms, 100, "reported as stored");
         assert_eq!(
             crate::sync_loop::interval_ms(&p).await,
-            crate::sync_loop::MIN_INTERVAL_MS,
+            omacal_view::sync_loop::MIN_INTERVAL_MS,
             "and clamped where it is actually used",
         );
     }

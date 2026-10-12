@@ -5,4 +5,7 @@
 //! for `tauri`.
 
 pub mod api;
+pub mod credentials;
+pub mod events;
 pub mod stubs;
+pub mod sync;

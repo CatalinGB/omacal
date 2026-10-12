@@ -1,9 +1,11 @@
-//! The routes: a health probe, one command endpoint and the static build.
+//! The routes: a health probe, one command endpoint, a WebSocket and the
+//! static build.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::body::Bytes;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -11,9 +13,11 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Serialize;
 use serde_json::{json, Value};
+use tokio::sync::broadcast;
 
 use omacal_view::AppState;
 
+use crate::events::Broadcaster;
 use crate::stubs;
 
 /// What an unimplemented command answers with: Tauri rejects with the Rust
@@ -21,26 +25,64 @@ use crate::stubs;
 /// show.
 const REFUSED: &str = "{\"code\":\"refused\",\"message\":\"not available in the web build\"}";
 
-pub fn router(state: Arc<AppState>, ui_dir: PathBuf) -> Router {
+/// What every handler sees: the shared service state plus the event channel the
+/// WebSocket subscribes to.
+#[derive(Clone)]
+pub struct ServerState {
+    pub state: Arc<AppState>,
+    pub events: Broadcaster,
+}
+
+pub fn router(state: Arc<AppState>, events: Broadcaster, ui_dir: PathBuf) -> Router {
+    let server = ServerState { state, events };
     Router::new()
         .route("/healthz", get(healthz))
         .route("/api/{cmd}", post(api))
+        .route("/ws", get(ws))
         .fallback_service(
             tower_http::services::ServeDir::new(ui_dir).append_index_html_on_directories(true),
         )
-        .with_state(state)
+        .with_state(server)
 }
 
 async fn healthz() -> StatusCode {
     StatusCode::OK
 }
 
-async fn api(State(state): State<Arc<AppState>>, Path(cmd): Path<String>, body: Bytes) -> Response {
+/// `GET /ws`: upgrades to a WebSocket and forwards every broadcast frame.
+async fn ws(upgrade: WebSocketUpgrade, State(server): State<ServerState>) -> Response {
+    upgrade.on_upgrade(move |socket| forward(socket, server.events.subscribe()))
+}
+
+/// Sends each broadcast frame, and drops the connection when the client closes.
+/// A lagging client is skipped rather than allowed to block the ticker.
+async fn forward(mut socket: WebSocket, mut rx: broadcast::Receiver<String>) {
+    loop {
+        tokio::select! {
+            broadcast = rx.recv() => match broadcast {
+                Ok(frame) => {
+                    if socket.send(Message::Text(frame.into())).await.is_err() {
+                        return;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => return,
+            },
+            incoming = socket.recv() => match incoming {
+                Some(Ok(Message::Close(_))) | None => return,
+                Some(Ok(_)) => {}
+                Some(Err(_)) => return,
+            },
+        }
+    }
+}
+
+async fn api(State(server): State<ServerState>, Path(cmd): Path<String>, body: Bytes) -> Response {
     let args = match parse_args(&body) {
         Ok(v) => v,
         Err(e) => return bad(e).into_response(),
     };
-    match dispatch(&state, &cmd, &args).await {
+    match dispatch(&server.state, &cmd, &args).await {
         Ok(value) => Json(value).into_response(),
         Err((status, message)) => (status, message).into_response(),
     }
@@ -183,7 +225,7 @@ async fn dispatch(state: &AppState, cmd: &str, args: &Value) -> ApiResult {
                 Err(e) => Err(bad(omacal_view::errors::user_facing(&e))),
             }
         }
-        "get_status" => Ok(stubs::status()),
+        "get_status" => Ok(stubs::status(&state.pool).await),
         "get_palette" => Ok(stubs::palette()),
         "get_weather" => Ok(stubs::weather()),
         "pending_invites" | "declined_guests" | "changed_meetings" | "list_accounts" => Ok(json!([])),

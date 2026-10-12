@@ -2,8 +2,6 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::TitleBarStyle;
 
-const LAST_SYNC_KEY: &str = "last_sync_ms";
-
 #[derive(Debug, Clone, Serialize)]
 pub struct AppStatus {
     /// Email addresses of connected accounts; empty means "not signed in".
@@ -98,34 +96,11 @@ pub async fn read_status(
     })
 }
 
-/// When the last successful sync was recorded, and nothing else.
-///
-/// The background loop wants this one number to decide whether a sync is due.
-/// It has no use for the account list, and — more to the point — no honest
-/// value for either of `read_status`'s flags: it is not the UI, so whether the
-/// window controls overlay the content is none of its business, and passing a
-/// placeholder for a field somebody later reads is how a placeholder becomes a
-/// claim.
-pub async fn last_sync_ms(pool: &SqlitePool) -> anyhow::Result<Option<i64>> {
-    let raw: Option<String> =
-        sqlx::query_scalar("SELECT value FROM settings WHERE key = ?1")
-            .bind(LAST_SYNC_KEY)
-            .fetch_optional(pool)
-            .await?;
-    Ok(raw.and_then(|v| v.parse().ok()))
-}
-
-pub async fn record_sync(pool: &SqlitePool, at_ms: i64) -> anyhow::Result<()> {
-    sqlx::query(
-        "INSERT INTO settings (key, value) VALUES (?1, ?2)
-         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-    )
-    .bind(LAST_SYNC_KEY)
-    .bind(at_ms.to_string())
-    .execute(pool)
-    .await?;
-    Ok(())
-}
+// The sync-timestamp read/write moved to `omacal-view::status` in Task 4,
+// where the web server's `get_status` and ticker share it without a
+// `src-tauri` dependency. Re-exported so every `crate::status::…` call site is
+// unchanged.
+pub use omacal_view::status::{last_sync_ms, record_sync};
 
 #[cfg(test)]
 mod tests {

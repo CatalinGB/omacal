@@ -7,7 +7,11 @@ use tower::ServiceExt;
 async fn app() -> axum::Router {
     let pool = omacal_store::connect_memory().await.unwrap();
     let state = Arc::new(omacal_view::AppState::headless(pool));
-    omacal_server::api::router(state, std::path::PathBuf::from("ui/dist"))
+    omacal_server::api::router(
+        state,
+        omacal_server::events::Broadcaster::new(),
+        std::path::PathBuf::from("ui/dist"),
+    )
 }
 
 #[tokio::test]

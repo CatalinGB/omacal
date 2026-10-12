@@ -3,17 +3,20 @@
 //! readers find what they expect; a later task fills in the live values.
 
 use serde_json::{json, Value};
+use sqlx::SqlitePool;
 
-/// `get_status`: no accounts, no update notice, no sync recorded yet. The
-/// version is this build's own, the same source the update check would use.
-pub fn status() -> Value {
+/// `get_status`: no accounts, no update notice. The one live value is the
+/// recorded sync time, so the header's "Synced …" reads the truth. The version
+/// is this build's own, the same source the update check would use.
+pub async fn status(pool: &SqlitePool) -> Value {
+    let last_sync_ms = omacal_view::status::last_sync_ms(pool).await.ok().flatten();
     json!({
         "accounts": [],
         "needs_reauth": [],
         "update": null,
         "version": env!("CARGO_PKG_VERSION"),
         "system_tz_change": null,
-        "last_sync_ms": null,
+        "last_sync_ms": last_sync_ms,
         "demo": false,
         "overlay_titlebar": false,
         "self_update": false,
