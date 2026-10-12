@@ -765,6 +765,7 @@ mod tests {
             pool,
             demo: false,
             credentials: std::sync::Arc::new(crate::NoopStore),
+            google_config: std::sync::Arc::new(crate::NoGoogleConfig),
             tokens: Default::default(),
             reauth: Default::default(),
             update: Default::default(),

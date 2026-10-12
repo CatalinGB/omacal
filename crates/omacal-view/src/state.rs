@@ -45,6 +45,9 @@ pub struct AppState {
     /// file. Read by the bodies that build a provider client (the CalDAV
     /// client, a Google access token).
     pub credentials: std::sync::Arc<dyn CredentialStore>,
+    /// How this instance loads its Google OAuth client pair. Lazy — a
+    /// CalDAV-only install has none and must not need one.
+    pub google_config: std::sync::Arc<dyn GoogleConfig>,
     /// True when running on synthetic demo data; surfaced to the interfaces via
     /// `get_status` so they can show the `DEMO DATA` badge.
     pub demo: bool,
@@ -94,6 +97,7 @@ impl AppState {
         Self {
             pool,
             credentials: std::sync::Arc::new(NoopStore),
+            google_config: std::sync::Arc::new(NoGoogleConfig),
             demo: false,
             tokens: Default::default(),
             reauth: Default::default(),
@@ -119,6 +123,23 @@ impl CredentialStore for NoopStore {
     }
     fn delete(&self, _key: &str) -> anyhow::Result<()> {
         Ok(())
+    }
+}
+
+/// Where this instance's Google OAuth client pair comes from: the config file
+/// on the desktop, the environment on a server. Lazy, so a CalDAV-only install
+/// never needs one.
+pub trait GoogleConfig: Send + Sync {
+    fn client(&self) -> anyhow::Result<(String, String)>;
+}
+
+/// A config source with no Google pair — for a headless state that never signs
+/// into Google, and for tests.
+pub struct NoGoogleConfig;
+
+impl GoogleConfig for NoGoogleConfig {
+    fn client(&self) -> anyhow::Result<(String, String)> {
+        anyhow::bail!("no Google client configured")
     }
 }
 

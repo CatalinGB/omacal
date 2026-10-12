@@ -4273,7 +4273,7 @@ mod tests {
     /// below the gate runs, so the token cache starts empty and stays that
     /// way.
     fn state_with(pool: SqlitePool, demo: bool) -> AppState {
-        AppState { pool, demo, credentials: std::sync::Arc::new(crate::KeyringStore), tokens: Default::default(), reauth: Default::default(), update: Default::default(), update_checked_at: Default::default(), system_tz_change: Default::default(), quit_on_close: Default::default(), open_date: Default::default() }
+        AppState { pool, demo, credentials: std::sync::Arc::new(crate::KeyringStore), google_config: std::sync::Arc::new(crate::DesktopGoogleConfig), tokens: Default::default(), reauth: Default::default(), update: Default::default(), update_checked_at: Default::default(), system_tz_change: Default::default(), quit_on_close: Default::default(), open_date: Default::default() }
     }
 
     /// "Demo mode must never write to the real database or reach Google",

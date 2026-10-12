@@ -453,6 +453,7 @@ mod tests {
             pool,
             demo: true,
             credentials: std::sync::Arc::new(crate::KeyringStore),
+            google_config: std::sync::Arc::new(crate::DesktopGoogleConfig),
             tokens: Default::default(),
             reauth: Default::default(),
             update: Default::default(),

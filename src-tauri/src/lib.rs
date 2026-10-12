@@ -338,6 +338,17 @@ impl omacal_view::CredentialStore for KeyringStore {
     }
 }
 
+/// The desktop's [`omacal_view::GoogleConfig`]: the `config.toml` (or the
+/// embedded pair), read lazily.
+pub(crate) struct DesktopGoogleConfig;
+
+impl omacal_view::GoogleConfig for DesktopGoogleConfig {
+    fn client(&self) -> anyhow::Result<(String, String)> {
+        let cfg = load_config()?;
+        Ok((cfg.client_id, cfg.client_secret))
+    }
+}
+
 /// Thin desktop wrappers over `omacal-view::auth`, injecting the keyring store
 /// so the call sites keep their signatures.
 pub(crate) fn store_refresh_token(email: &str, token: &str) -> anyhow::Result<()> {
@@ -1087,6 +1098,7 @@ pub fn run() {
             app.manage(AppState {
                 pool, demo,
                 credentials: std::sync::Arc::new(KeyringStore),
+                google_config: std::sync::Arc::new(DesktopGoogleConfig),
                 tokens: Default::default(),
                 reauth: Default::default(),
                 update: Default::default(),
@@ -1425,6 +1437,7 @@ mod tests {
             .fetch_one(&pool).await.unwrap();
         let state = AppState {
             pool: pool.clone(), demo: false, credentials: std::sync::Arc::new(KeyringStore),
+            google_config: std::sync::Arc::new(DesktopGoogleConfig),
             tokens: Default::default(), reauth: Default::default(),
             update: Default::default(), update_checked_at: Default::default(),
             system_tz_change: Default::default(), quit_on_close: Default::default(), open_date: Default::default(),
