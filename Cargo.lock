@@ -3267,6 +3267,7 @@ dependencies = [
  "anyhow",
  "jiff",
  "omacal-core",
+ "omacal-google",
  "omacal-store",
  "omacal-sync",
  "serde",

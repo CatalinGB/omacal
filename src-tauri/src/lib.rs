@@ -306,13 +306,41 @@ fn load_config_from(
     }
 }
 
-fn store_refresh_token(email: &str, token: &str) -> anyhow::Result<()> {
-    keyring::Entry::new(KEYRING_SERVICE, email)?.set_password(token)?;
-    Ok(())
+/// The desktop's [`omacal_view::CredentialStore`]: the OS keyring. The logic
+/// that uses it lives in `omacal-view::auth`; this is the only place the
+/// service layer meets a keyring.
+pub(crate) struct KeyringStore;
+
+impl omacal_view::CredentialStore for KeyringStore {
+    fn get(&self, key: &str) -> anyhow::Result<Option<String>> {
+        match keyring::Entry::new(KEYRING_SERVICE, key)?.get_password() {
+            Ok(secret) => Ok(Some(secret)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn set(&self, key: &str, secret: &str) -> anyhow::Result<()> {
+        keyring::Entry::new(KEYRING_SERVICE, key)?.set_password(secret)?;
+        Ok(())
+    }
+
+    fn delete(&self, key: &str) -> anyhow::Result<()> {
+        match keyring::Entry::new(KEYRING_SERVICE, key)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(e.into()),
+        }
+    }
 }
 
-fn load_refresh_token(email: &str) -> anyhow::Result<String> {
-    Ok(keyring::Entry::new(KEYRING_SERVICE, email)?.get_password()?)
+/// Thin desktop wrappers over `omacal-view::auth`, injecting the keyring store
+/// so the call sites keep their signatures.
+pub(crate) fn store_refresh_token(email: &str, token: &str) -> anyhow::Result<()> {
+    omacal_view::auth::store_refresh_token(&KeyringStore, email, token)
+}
+
+pub(crate) fn load_refresh_token(email: &str) -> anyhow::Result<String> {
+    omacal_view::auth::load_refresh_token(&KeyringStore, email)
 }
 
 /// One pending consent attempt across windows; cancellation stops its listener.
@@ -568,56 +596,13 @@ pub(crate) fn demo_sync_guard(demo: bool) -> Result<(), String> {
 
 /// Whether a cached entry can be used as-is.
 ///
-/// Pulled out so the decision is testable: an untested condition guarding a
-/// Keychain read is what produced the prompt-every-few-minutes behaviour.
-fn cached_is_usable(entry: Option<&CachedTokens>, now_ms: i64) -> bool {
-    entry.is_some_and(|t| t.expires_at_ms > now_ms)
-}
-
-/// Returns a usable access token for `email`, reading the Keychain and
-/// refreshing only when the cached one is absent or expired.
-///
-/// This is the whole reason the cache exists: the Keychain read is what raises
-/// the macOS access prompt, and doing it on every sync made the app unusable.
-async fn access_token_for(state: &AppState, cfg: &Config, email: &str) -> anyhow::Result<String> {
-    {
-        let cache = state.tokens.lock().await;
-        if cached_is_usable(cache.get(email), now_ms()) {
-            return Ok(cache[email].access_token.clone());
-        }
-    } // lock dropped before the network call
-
-    // Prefer a refresh token we already hold; only touch the Keychain if we
-    // have none for this account yet.
-    let refresh_token = {
-        let cache = state.tokens.lock().await;
-        cache.get(email).map(|t| t.refresh_token.clone())
-    };
-    let refresh_token = match refresh_token {
-        Some(rt) => rt,
-        None => load_refresh_token(email)?,
-    };
-
-    let fresh = omacal_google::auth::refresh(
-        omacal_google::auth::TOKEN_ENDPOINT,
-        &cfg.client_id,
-        &cfg.client_secret,
-        &refresh_token,
+/// The token exchange now lives in `omacal-view::auth`; this wrapper injects
+/// the keyring store so `events.rs` call sites are unchanged.
+pub(crate) async fn access_token_for(state: &AppState, cfg: &Config, email: &str) -> anyhow::Result<String> {
+    omacal_view::auth::access_token_for(
+        state, &KeyringStore, &cfg.client_id, &cfg.client_secret, email,
     )
-    .await?;
-
-    let access_token = fresh.access_token.clone();
-    let mut cache = state.tokens.lock().await;
-    cache.insert(
-        email.to_string(),
-        CachedTokens {
-            // Google omits refresh_token on refresh; keep the one we used.
-            refresh_token: fresh.refresh_token.unwrap_or(refresh_token),
-            access_token: fresh.access_token,
-            expires_at_ms: fresh.expires_at_ms,
-        },
-    );
-    Ok(access_token)
+    .await
 }
 
 /// The calendars a sync should fetch for one account.
@@ -1847,49 +1832,11 @@ mod tests {
         }
     }
 
-    fn cached(expires_at_ms: i64) -> CachedTokens {
-        CachedTokens {
-            refresh_token: "rt".into(),
-            access_token: "at".into(),
-            expires_at_ms,
-        }
-    }
-
-    const NOW: i64 = 1_785_715_200_000;
-
-    #[test]
-    fn an_absent_entry_is_never_usable() {
-        assert!(!cached_is_usable(None, NOW));
-    }
-
-    #[test]
-    fn a_live_entry_is_usable_so_the_keychain_is_not_read() {
-        assert!(cached_is_usable(Some(&cached(NOW + 60_000)), NOW));
-    }
-
-    /// The vector icon every Linux package installs (`bundle.linux.*.files`
-    /// in tauri.conf.json; the Flatpak copies it). Desktops choose an image
-    /// loader by content, and shared-mime-info recognises SVG only from
-    /// `<svg` within the first 256 bytes. The icon used to open with a
-    /// 944-byte comment, so it read as text/html, the icon theme still chose
-    /// it, and Ubuntu's dock drew no OmaCal icon at all (2026-10-07).
     #[test]
     fn the_installed_svg_icon_is_recognisable_from_its_first_bytes() {
         let svg = include_str!("../icons/icon.svg");
         let at = svg.find("<svg").expect("an <svg> element");
         assert!(at < 256, "<svg starts at byte {at}, past content sniffing's 256");
-    }
-
-    #[test]
-    fn an_expired_entry_is_not_usable() {
-        assert!(!cached_is_usable(Some(&cached(NOW - 1)), NOW));
-    }
-
-    #[test]
-    fn an_entry_expiring_exactly_now_is_not_usable() {
-        // Strictly greater: a token expiring this millisecond is not worth a
-        // request that will fail.
-        assert!(!cached_is_usable(Some(&cached(NOW)), NOW));
     }
 
     #[test]

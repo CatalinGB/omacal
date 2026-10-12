@@ -4,6 +4,7 @@
 //! unchanged; `omacal-server` depends on this directly. Nothing in this crate
 //! may reach for `tauri`.
 
+pub mod auth;
 pub mod commands;
 pub mod combined;
 /// Test-only: the golden-file mechanism the UI fixtures read. Gated so nothing
