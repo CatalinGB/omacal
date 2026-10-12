@@ -1,0 +1,12 @@
+target
+ui/node_modules
+ui/dist
+ui/test-results
+.git
+.github
+.scratch
+docs
+packaging
+skills
+scripts
+*.md

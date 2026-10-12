@@ -1,0 +1,12 @@
+services:
+  omacal:
+    build: .
+    image: omacal-web
+    ports:
+      - "8080:8080"
+    volumes:
+      - omacal-data:/data
+    restart: unless-stopped
+
+volumes:
+  omacal-data:
