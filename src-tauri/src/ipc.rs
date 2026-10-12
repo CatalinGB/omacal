@@ -233,13 +233,19 @@ pub(crate) async fn dispatch(state: &AppState, req: Request) -> serde_json::Valu
             )
             .await
             {
-                Ok(tasks) => ok_env(serde_json::json!(tasks)),
+                Ok(tasks) => {
+                    crate::upcoming::refresh_soon(state.pool.clone(), state.demo);
+                    ok_env(serde_json::json!(tasks))
+                }
                 Err(m) => fail_env("refused", &m),
             }
         }
         Request::TaskComplete { id, done } => {
             match crate::tasks::complete_body(state, id, done).await {
-                Ok(tasks) => ok_env(serde_json::json!(tasks)),
+                Ok(tasks) => {
+                    crate::upcoming::refresh_soon(state.pool.clone(), state.demo);
+                    ok_env(serde_json::json!(tasks))
+                }
                 Err(m) => fail_env("refused", &m),
             }
         }
@@ -249,7 +255,10 @@ pub(crate) async fn dispatch(state: &AppState, req: Request) -> serde_json::Valu
             )
             .await
             {
-                Ok(tasks) => ok_env(serde_json::json!(tasks)),
+                Ok(tasks) => {
+                    crate::upcoming::refresh_soon(state.pool.clone(), state.demo);
+                    ok_env(serde_json::json!(tasks))
+                }
                 Err(m) => fail_env("refused", &m),
             }
         }

@@ -19,6 +19,7 @@ pub mod meeting;
 pub mod settings;
 pub mod state;
 pub mod sync;
+pub mod tasks;
 pub mod view;
 pub mod webcal;
 pub mod write;
