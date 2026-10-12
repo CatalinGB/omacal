@@ -41,6 +41,10 @@ pub struct UpdateNotice {
 /// signatures.
 pub struct AppState {
     pub pool: SqlitePool,
+    /// Where this instance's secrets live: the desktop's keyring, a server's
+    /// file. Read by the bodies that build a provider client (the CalDAV
+    /// client, a Google access token).
+    pub credentials: std::sync::Arc<dyn CredentialStore>,
     /// True when running on synthetic demo data; surfaced to the interfaces via
     /// `get_status` so they can show the `DEMO DATA` badge.
     pub demo: bool,
@@ -84,10 +88,12 @@ pub struct AppState {
 
 impl AppState {
     /// A state with only the fields the service layer uses — what a headless
-    /// server builds. The desktop fills the rest via its own constructor.
+    /// server builds, with a store that holds nothing. The desktop fills the
+    /// rest via its own constructor.
     pub fn headless(pool: SqlitePool) -> Self {
         Self {
             pool,
+            credentials: std::sync::Arc::new(NoopStore),
             demo: false,
             tokens: Default::default(),
             reauth: Default::default(),
@@ -97,6 +103,22 @@ impl AppState {
             system_tz_change: Default::default(),
             open_date: Default::default(),
         }
+    }
+}
+
+/// A credential store that holds nothing — for a headless instance that never
+/// signs in, and for tests.
+pub struct NoopStore;
+
+impl CredentialStore for NoopStore {
+    fn get(&self, _key: &str) -> anyhow::Result<Option<String>> {
+        Ok(None)
+    }
+    fn set(&self, _key: &str, _secret: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn delete(&self, _key: &str) -> anyhow::Result<()> {
+        Ok(())
     }
 }
 

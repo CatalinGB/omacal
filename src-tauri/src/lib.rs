@@ -590,7 +590,7 @@ pub(crate) use omacal_view::DEMO_SYNC_MESSAGE;
 /// the keyring store so `events.rs` call sites are unchanged.
 pub(crate) async fn access_token_for(state: &AppState, cfg: &Config, email: &str) -> anyhow::Result<String> {
     omacal_view::auth::access_token_for(
-        state, &KeyringStore, &cfg.client_id, &cfg.client_secret, email,
+        state, &*state.credentials, &cfg.client_id, &cfg.client_secret, email,
     )
     .await
 }
@@ -647,7 +647,7 @@ pub(crate) use omacal_view::synced_window;
 /// store and the Google client pair from the config file. Called by `sync_now`
 /// and the background sync loop.
 pub(crate) async fn sync_all(state: &AppState) -> anyhow::Result<u64> {
-    omacal_view::sync::sync_all(state, &KeyringStore, || {
+    omacal_view::sync::sync_all(state, &*state.credentials, || {
         let cfg = load_config()?;
         Ok((cfg.client_id, cfg.client_secret))
     })
@@ -1086,6 +1086,7 @@ pub fn run() {
 
             app.manage(AppState {
                 pool, demo,
+                credentials: std::sync::Arc::new(KeyringStore),
                 tokens: Default::default(),
                 reauth: Default::default(),
                 update: Default::default(),
@@ -1423,7 +1424,8 @@ mod tests {
         let id: i64 = sqlx::query_scalar("SELECT id FROM events WHERE summary = 'Excitel weekly'")
             .fetch_one(&pool).await.unwrap();
         let state = AppState {
-            pool: pool.clone(), demo: false, tokens: Default::default(), reauth: Default::default(),
+            pool: pool.clone(), demo: false, credentials: std::sync::Arc::new(KeyringStore),
+            tokens: Default::default(), reauth: Default::default(),
             update: Default::default(), update_checked_at: Default::default(),
             system_tz_change: Default::default(), quit_on_close: Default::default(), open_date: Default::default(),
         };

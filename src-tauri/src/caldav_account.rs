@@ -36,7 +36,7 @@ pub(crate) async fn client_for_calendar(
     state: &AppState,
     calendar_id: i64,
 ) -> anyhow::Result<(CalDavClient, String)> {
-    omacal_view::caldav_account::client_for_calendar(&crate::KeyringStore, state, calendar_id).await
+    omacal_view::caldav_account::client_for_calendar(&*state.credentials, state, calendar_id).await
 }
 
 /// Connects (or reconnects) a CalDAV account: validates the credentials by

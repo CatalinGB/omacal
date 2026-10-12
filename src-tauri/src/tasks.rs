@@ -893,6 +893,7 @@ mod tests {
         AppState {
             pool,
             demo: false,
+            credentials: std::sync::Arc::new(crate::KeyringStore),
             tokens: Default::default(),
             reauth: Default::default(),
             update: Default::default(),

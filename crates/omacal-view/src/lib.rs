@@ -23,7 +23,7 @@ pub mod view;
 pub mod webcal;
 pub mod write;
 
-pub use state::{AppState, CachedTokens, CredentialStore, EventSink, UpdateNotice};
+pub use state::{AppState, CachedTokens, CredentialStore, EventSink, NoopStore, UpdateNotice};
 
 /// Milliseconds since the Unix epoch.
 pub fn now_ms() -> i64 {

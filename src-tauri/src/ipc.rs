@@ -443,6 +443,7 @@ mod tests {
         let state = AppState {
             pool,
             demo: true,
+            credentials: std::sync::Arc::new(crate::KeyringStore),
             tokens: Default::default(),
             reauth: Default::default(),
             update: Default::default(),
