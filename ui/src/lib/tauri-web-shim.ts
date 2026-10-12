@@ -93,6 +93,21 @@ function connectEvents(): void {
   };
 }
 
+/** One POST to a command route, with the error shape Tauri's `invoke` has. */
+async function post(cmd: string, args?: InvokeArgs): Promise<Response> {
+  const response = await fetch(`/api/${cmd}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(args ?? {}),
+  });
+  if (!response.ok) {
+    // Tauri rejects a command's `Err` with the Rust error's Display; the server
+    // sends that string as the body, so existing `.catch` paths are unchanged.
+    throw await response.text();
+  }
+  return response;
+}
+
 async function invoke(cmd: string, args?: InvokeArgs): Promise<unknown> {
   if (cmd === "plugin:event|listen") {
     const { event, handler } = (args ?? {}) as { event: string; handler: number };
@@ -112,16 +127,17 @@ async function invoke(cmd: string, args?: InvokeArgs): Promise<unknown> {
     return null;
   }
 
-  const response = await fetch(`/api/${cmd}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(args ?? {}),
-  });
-  if (!response.ok) {
-    // Tauri rejects a command's `Err` with the Rust error's Display; the server
-    // sends that string as the body, so existing `.catch` paths are unchanged.
-    throw await response.text();
+  if (cmd === "open_conference") {
+    // The desktop opens the OS browser server-side and returns `()`. A browser
+    // cannot do that, so the route hands back the resolved URL and the page
+    // opens it — still only ever naming an event, never a destination.
+    const response = await post(cmd, args);
+    const url = (await response.json()) as unknown;
+    if (typeof url === "string") window.open(url, "_blank", "noopener");
+    return undefined;
   }
+
+  const response = await post(cmd, args);
   return response.json();
 }
 

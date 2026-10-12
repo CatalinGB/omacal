@@ -83,9 +83,26 @@ async fn api(State(server): State<ServerState>, Path(cmd): Path<String>, body: B
         Err(e) => return bad(e).into_response(),
     };
     match dispatch(&server.state, &cmd, &args).await {
-        Ok(value) => Json(value).into_response(),
+        Ok(value) => {
+            // A write that landed changed the store, so every open page
+            // reloads — the same `{"upserted": 1}` the desktop emits after a
+            // successful write (`src-tauri/src/ipc.rs`), and the same signal
+            // the sync ticker sends.
+            if is_write(&cmd) {
+                server.events.send("sync-finished", json!({ "upserted": 1 }));
+            }
+            Json(value).into_response()
+        }
         Err((status, message)) => (status, message).into_response(),
     }
+}
+
+/// The event mutations: a success changed the calendar, so the page reloads.
+fn is_write(cmd: &str) -> bool {
+    matches!(
+        cmd,
+        "create_event" | "update_event" | "delete_event_cmd" | "respond_to_event"
+    )
 }
 
 /// The invoke payload, `{}` when the body is absent or JSON `null` — the shim
@@ -160,6 +177,35 @@ fn req_u8(args: &Value, key: &str) -> Result<u8, (StatusCode, String)> {
     u8::try_from(req_i64(args, key)?).map_err(|_| bad(format!("`{key}` is out of range")))
 }
 
+fn req_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, (StatusCode, String)> {
+    lookup(args, key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| bad(format!("missing or invalid `{key}`")))
+}
+
+/// An optional integer argument: absent, `null`, or the number itself.
+fn opt_i64(args: &Value, key: &str) -> Result<Option<i64>, (StatusCode, String)> {
+    match lookup(args, key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(n)) => n
+            .as_i64()
+            .map(Some)
+            .ok_or_else(|| bad(format!("`{key}` is out of range"))),
+        Some(_) => Err(bad(format!("`{key}` must be a number"))),
+    }
+}
+
+/// The `fields` object of `create_event`/`update_event`, deserialized through
+/// the same `write::EventInput` the desktop command takes, so an unreadable
+/// payload is refused exactly once.
+fn req_fields(
+    args: &Value,
+    key: &str,
+) -> Result<omacal_view::write::EventInput, (StatusCode, String)> {
+    let value = lookup(args, key).ok_or_else(|| bad(format!("missing `{key}`")))?;
+    serde_json::from_value(value.clone()).map_err(|e| bad(e.to_string()))
+}
+
 fn pad(args: &Value) -> Result<usize, (StatusCode, String)> {
     let raw = match lookup(args, "pad") {
         None | Some(Value::Null) => None,
@@ -225,6 +271,53 @@ async fn dispatch(state: &AppState, cmd: &str, args: &Value) -> ApiResult {
                 Err(e) => Err(bad(omacal_view::errors::user_facing(&e))),
             }
         }
+        "create_event" => {
+            let calendar_id = req_i64(args, "calendar_id")?;
+            let fields = req_fields(args, "fields")?;
+            let send_updates = req_str(args, "send_updates")?;
+            result(omacal_view::events::create_event_body(state, calendar_id, fields, send_updates).await)
+        }
+        "update_event" => {
+            let id = req_i64(args, "id")?;
+            let scope = req_str(args, "scope")?;
+            let occurrence_start_ms = req_i64(args, "occurrence_start_ms")?;
+            let fields = req_fields(args, "fields")?;
+            let send_updates = req_str(args, "send_updates")?;
+            let target_calendar_id = opt_i64(args, "target_calendar_id")?;
+            result(
+                omacal_view::events::update_event_body(
+                    state,
+                    id,
+                    scope,
+                    occurrence_start_ms,
+                    fields,
+                    send_updates,
+                    target_calendar_id,
+                )
+                .await,
+            )
+        }
+        "delete_event_cmd" => {
+            let id = req_i64(args, "id")?;
+            let scope = req_str(args, "scope")?;
+            let occurrence_start_ms = req_i64(args, "occurrence_start_ms")?;
+            result(omacal_view::events::delete_event_body(state, id, scope, occurrence_start_ms).await)
+        }
+        "respond_to_event" => {
+            let id = req_i64(args, "id")?;
+            let response = req_str(args, "response")?;
+            let scope = req_str(args, "scope")?;
+            let occurrence_start_ms = req_i64(args, "occurrence_start_ms")?;
+            result(
+                omacal_view::events::respond_event_body(state, id, response, scope, occurrence_start_ms)
+                    .await,
+            )
+        }
+        "refresh_event" => {
+            let id = req_i64(args, "id")?;
+            result(omacal_view::events::refresh_event_impl(state, id).await)
+        }
+        "open_conference" => open_conference(state, req_i64(args, "id")?).await,
         "get_status" => Ok(stubs::status(&state.pool).await),
         "get_palette" => Ok(stubs::palette()),
         "get_weather" => Ok(stubs::weather()),
@@ -232,5 +325,33 @@ async fn dispatch(state: &AppState, cmd: &str, args: &Value) -> ApiResult {
         "take_open_date" => Ok(Value::Null),
         "take_quick_add" | "take_preferences" => Ok(json!(false)),
         _ => Err(refused()),
+    }
+}
+
+/// The web build's `open_conference`: where the desktop opens the OS browser,
+/// this hands the resolved URL back to the page, which opens it. The URL is
+/// resolved from the store in the desktop's own order — structured conference
+/// first, then a recognised meeting link in `location`, then one in
+/// `description` — so the webview still never chooses a destination, only an
+/// event.
+async fn open_conference(state: &AppState, id: i64) -> ApiResult {
+    let row: Option<(Option<String>, Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT conference_uri, location, description FROM events WHERE id = ?1")
+            .bind(id)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(|e| {
+                let err: anyhow::Error = e.into();
+                bad(omacal_view::errors::user_facing(&err))
+            })?;
+    let Some((conference, location, description)) = row else {
+        return Err(bad("This event is no longer on the calendar."));
+    };
+    let url = conference.or_else(|| {
+        omacal_view::meeting::conference_join_url(location.as_deref(), description.as_deref())
+    });
+    match url {
+        Some(url) => to_value(url),
+        None => Err(bad("This event has no meeting link.")),
     }
 }
