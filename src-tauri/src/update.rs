@@ -40,18 +40,9 @@ const CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(24 * 
 /// the room.
 const FIRST_CHECK_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// What the UI is told when a newer release exists. Rides on `get_status`
-/// beside `needs_reauth`, for the same reason: it is a fact about this
-/// running instance that the header renders differently for.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub struct UpdateNotice {
-    /// The newer version, without the tag's `v` — it is displayed inside a
-    /// sentence, and "v0.1.2 is available" reads like a git tag escaped.
-    pub version: String,
-    /// The release page, opened by `open_latest_release`. Kept backend-side
-    /// so the webview never chooses what the browser opens.
-    pub url: String,
-}
+/// What the UI is told when a newer release exists. Now defined in
+/// `omacal-view` so both interfaces share the type; re-exported here.
+pub use omacal_view::UpdateNotice;
 
 /// Whether the loop may reach the network at all. Demo mode's promise is
 /// broader than "no Google": it produces no network traffic, full stop —

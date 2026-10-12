@@ -12,8 +12,11 @@ pub mod combined;
 pub mod golden;
 pub mod meeting;
 pub mod settings;
+pub mod state;
 pub mod view;
 pub mod write;
+
+pub use state::{AppState, CachedTokens, CredentialStore, EventSink, UpdateNotice};
 
 /// Milliseconds since the Unix epoch.
 pub fn now_ms() -> i64 {

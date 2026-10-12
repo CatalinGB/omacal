@@ -55,77 +55,9 @@ mod write;
 use sqlx::SqlitePool;
 use tauri::Manager;
 
-/// Live credentials for one account, held for the process lifetime.
-///
-/// Deliberately has no `Debug`: a derived one would print both secrets, and a
-/// leaked refresh token never expires.
-pub struct CachedTokens {
-    refresh_token: String,
-    access_token: String,
-    /// When the access token stops being usable, already carrying its safety margin.
-    expires_at_ms: i64,
-}
-
-pub struct AppState {
-    pub pool: SqlitePool,
-    /// True when running on synthetic demo data; surfaced to the UI via
-    /// `get_status` so it can show the `DEMO DATA` badge.
-    pub demo: bool,
-    /// Keyed by account email.
-    ///
-    /// Without this, every sync re-read the Keychain and re-exchanged a refresh
-    /// token that was still valid for the best part of an hour. macOS prompts
-    /// for Keychain access per binary, and an unsigned `cargo tauri dev` build
-    /// changes hash on every rebuild — so "Always Allow" never stuck and the
-    /// prompt returned every few minutes. One read per launch instead.
-    pub tokens: tokio::sync::Mutex<std::collections::HashMap<String, CachedTokens>>,
-    /// Accounts whose refresh token the token endpoint has pronounced dead —
-    /// `invalid_grant` and its siblings, the answers that never change on
-    /// retry. Sync skips these instead of re-asking Google every five minutes,
-    /// and `get_status` surfaces them so the UI can offer the one thing that
-    /// helps: signing in again. Cleared per account by a successful sign-in.
-    ///
-    /// In memory only, deliberately: on relaunch the first sync re-discovers a
-    /// dead token in one request, which is cheaper than keeping a database
-    /// column truthful.
-    ///
-    /// A `BTreeSet` so `get_status` reports a stable order; a blocking mutex
-    /// because no holder crosses an await.
-    pub reauth: std::sync::Mutex<std::collections::BTreeSet<String>>,
-    /// A newer published release, once the daily check has found one —
-    /// `None` until then. Set by `update::spawn`, carried to the UI on
-    /// `get_status`, and read back by `open_latest_release` for the URL to
-    /// open. In memory only: on relaunch the first check re-learns it in one
-    /// request, same reasoning as `reauth`.
-    pub update: std::sync::Mutex<Option<update::UpdateNotice>>,
-    /// When the release endpoint was last asked, ms epoch; `0` for never.
-    /// What `update::check_on_focus` rates its floor against, so an
-    /// alt-tab is not a request to poll GitHub. Atomic rather than another
-    /// mutex: one stamp, written after each check, read on each focus.
-    pub update_checked_at: std::sync::atomic::AtomicI64,
-    /// The `quit_on_close` setting, mirrored where a synchronous handler can
-    /// read it. `WindowEvent::CloseRequested` has to decide before the window
-    /// goes, with no runtime to await a query on, so the row is read once at
-    /// startup and re-stored by `settings::Setting::QuitOnClose`. Atomic for
-    /// `update_checked_at`'s reason: one flag, written on a toggle, read on
-    /// a close.
-    pub quit_on_close: std::sync::atomic::AtomicBool,
-    /// The system zone's new IANA name, once `tz_watch` has seen it move out
-    /// from under this process — `None` until then. Carried to the UI on
-    /// `get_status`, where it becomes the restart banner. In memory only,
-    /// and deliberately never cleared while the process lives: the process
-    /// zone is fixed at launch, so nothing short of the restart the banner
-    /// offers can make the fact stop being true.
-    pub system_tz_change: std::sync::Mutex<Option<String>>,
-    /// The date a *fresh* launch was asked to open on (`omacal 2026-09-01`
-    /// with no instance yet running — the running-instance case never lands
-    /// here, it arrives over the single-instance channel while a webview
-    /// already listens). Parked because the webview does not exist yet, and
-    /// collected exactly once by `take_open_date`: a date is an instruction,
-    /// not a state, and a later reader replaying it would yank the calendar
-    /// back to a day the user has already navigated away from.
-    pub open_date: std::sync::Mutex<Option<String>>,
-}
+// `CachedTokens` and `AppState` now live in `omacal-view`, shared with the web
+// server. Re-exported so every `crate::AppState` path is unchanged.
+pub use omacal_view::{AppState, CachedTokens};
 
 /// The notification transport, managed on its own rather than inside
 /// [`AppState`]: it exists only on desktop and only once `setup` has built

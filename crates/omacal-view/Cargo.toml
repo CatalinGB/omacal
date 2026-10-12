@@ -16,6 +16,7 @@ anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+tokio = { version = "1.53.1", features = ["sync"] }
 jiff = "0.2.35"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite"] }
 uuid = { version = "1", features = ["v4"] }
