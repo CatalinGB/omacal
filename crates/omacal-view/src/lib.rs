@@ -36,6 +36,21 @@ pub fn now_ms() -> i64 {
 /// The window a sync fetches: decisions ("what should I ask the provider for?")
 /// must read one definition.
 pub fn synced_window(now_ms: i64) -> (i64, i64) {
-    const DAY: i64 = 24 * 3_600_000;
+    const DAY: i64 = 3_600_000 * 24;
     (now_ms - 180 * DAY, now_ms + 365 * DAY)
+}
+
+/// What every provider-reaching command returns in demo mode, before any I/O.
+pub const DEMO_SYNC_MESSAGE: &str =
+    "Demo mode — this is synthetic data, so there is nothing to connect or sync.";
+
+/// `Err` when `demo` is true, `Ok` otherwise. A plain function of the flag —
+/// no config or keyring I/O anywhere near it — so callers that check it first
+/// cannot reach that I/O in demo mode.
+pub fn demo_sync_guard(demo: bool) -> Result<(), String> {
+    if demo {
+        Err(DEMO_SYNC_MESSAGE.to_string())
+    } else {
+        Ok(())
+    }
 }

@@ -104,3 +104,14 @@ pub async fn week_start(pool: &sqlx::SqlitePool) -> WeekStart {
 pub async fn combine_identical_events(pool: &sqlx::SqlitePool) -> bool {
     read(pool, COMBINE_IDENTICAL_EVENTS_KEY).await.as_deref() == Some("1")
 }
+
+const DISPLAY_TZ_KEY: &str = "display_timezone";
+
+/// The stored display timezone, or `None` for the process zone.
+///
+/// The write bodies that need a zone for a new resource read it here rather
+/// than the full `AppSettings`, which lives with the desktop's theme and
+/// weather.
+pub async fn display_timezone(pool: &sqlx::SqlitePool) -> Option<String> {
+    read(pool, DISPLAY_TZ_KEY).await
+}

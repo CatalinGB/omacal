@@ -578,20 +578,11 @@ pub(crate) use omacal_view::now_ms;
 /// If a third demo-gated write command shows up, give it the same treatment
 /// rather than growing this constant's wording to cover three unrelated
 /// actions.
-const DEMO_SYNC_MESSAGE: &str =
-    "Demo mode — this is synthetic data, so there is nothing to connect or sync.";
-
-/// `Err` when `demo` is true, `Ok` otherwise. A plain function of the flag —
-/// no config or keyring I/O anywhere near it — so callers that check it first
-/// (`sync_now`, `sign_in`, and the background loop) cannot reach that I/O in
-/// demo mode.
-pub(crate) fn demo_sync_guard(demo: bool) -> Result<(), String> {
-    if demo {
-        Err(DEMO_SYNC_MESSAGE.to_string())
-    } else {
-        Ok(())
-    }
-}
+/// Re-exported from `omacal-view` so every `crate::demo_sync_guard` path is
+/// unchanged. The message is reached only by the desktop's tests.
+pub(crate) use omacal_view::demo_sync_guard;
+#[cfg(test)]
+pub(crate) use omacal_view::DEMO_SYNC_MESSAGE;
 
 /// Whether a cached entry can be used as-is.
 ///
